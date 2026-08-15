@@ -1,0 +1,60 @@
+# Authoring environment for your labs. Uses the prebuilt Simspace images and
+# mounts only your ./labs directory — you never need Node or the app source.
+#
+#   docker compose up dev                 # live preview at http://localhost:5173
+#                                         #   (also starts pulse — see below)
+#   docker compose run --rm validate      # validate labs + regenerate labs.json
+#
+# Pin the image tags to a released version for reproducible authoring, e.g.
+#   export SIMSPACE_AUTHORING_IMAGE=dockersamples/simspace-authoring:1
+#   export SIMSPACE_PULSE_IMAGE=dockersamples/simspace-pulse:1
+
+name: my-simspace
+
+services:
+  # Live preview. Edits to ./labs show on browser refresh. The catalog (labs.json)
+  # is generated on the fly by the app, so there's nothing to build.
+  dev:
+    image: ${SIMSPACE_AUTHORING_IMAGE:-dockersamples/simspace-authoring:latest}
+    command: npm run dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./labs:/usr/local/app/public/labs
+    # Bring pulse up alongside the preview so you get the FULL experience while
+    # authoring — live "who's here" presence, per-milestone counts, and the
+    # instructor insights dashboard. The app's bundled dev config already points
+    # at http://localhost:8888, so it just works; opt a single lab out with
+    # `tracking: false` in its labspace.yaml.
+    depends_on:
+      - pulse
+
+  # Presence + analytics backend (the same `pulse` service the platform deploys),
+  # published on :8888 where the app's dev config points. This is a DEV
+  # convenience only — in production you don't run pulse yourself; you set
+  # `pulse-endpoint` in .github/workflows/deploy.yml so the published site talks
+  # to your hosted backend. Delete this service (and the `depends_on` above) to
+  # author without any tracking.
+  pulse:
+    image: ${SIMSPACE_PULSE_IMAGE:-dockersamples/simspace-pulse:latest}
+    ports:
+      - "8888:8888"
+    environment:
+      # Enables the instructor dashboard at #/labs/<id>/insights — open it and
+      # enter this token. Any value works locally.
+      STATS_TOKEN: "dev-token"
+    volumes:
+      # Persist analytics across restarts. Remove for an ephemeral backend.
+      - pulse-data:/data
+
+  # One-shot validator: checks every lab under labs/ and regenerates labs.json.
+  # Run with `docker compose run --rm validate`.
+  validate:
+    image: ${SIMSPACE_AUTHORING_IMAGE:-dockersamples/simspace-authoring:latest}
+    profiles: ["tools"]
+    command: npm run validate-lab -- /labs
+    volumes:
+      - ./labs:/labs
+
+volumes:
+  pulse-data:

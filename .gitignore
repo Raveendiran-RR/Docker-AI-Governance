@@ -1,0 +1,10 @@
+.DS_Store
+*.local
+site/
+
+# Generated from labs/*/labspace.yaml — never commit it.
+labs.json
+
+# Personal overlay for .sbxenv.yaml — machine-specific sandbox settings, passed
+# as `sbx env run .sbxenv.yaml local.sbxenv.yaml`.
+local.sbxenv.yaml

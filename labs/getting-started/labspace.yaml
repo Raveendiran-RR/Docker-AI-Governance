@@ -1,0 +1,42 @@
+title: "My Lab"
+description: "A starter Simspace lab — edit these files, preview locally, and push to deploy."
+
+# Optional catalog card metadata. It's only shown on the landing page when this
+# repo has two or more labs (a single lab is entered directly). labs.json is
+# GENERATED from this block — you never write or edit labs.json by hand.
+catalog:
+  icon: school
+  tags: ["getting started"]
+
+# Command behaviour lives in simulator.yaml (relative to this file).
+simulator: simulator.yaml
+
+# One terminal tab. Add more (each with a unique id) for multi-shell labs.
+terminals:
+  - id: host
+    title: Terminal
+    icon: terminal
+
+# Seed the virtual filesystem. Built-in `ls`/`cat` reflect these immediately.
+files:
+  README.txt: |
+    Welcome to your lab's virtual filesystem.
+    Files created by scenarios and save-as blocks appear here too.
+
+# Ordered instruction pages (markdown), rendered in the left-hand panel.
+# `steps:` are this section's MILESTONES: each id is completed by a scenario in
+# simulator.yaml tagged `completes: <id>`. They drive the nav check-marks, saved
+# progress, and the instructor funnel — give every hands-on section at least one.
+# A reading-only page omits `steps:` entirely.
+sections:
+  - title: Introduction
+    contentPath: 00-intro.md
+    steps:
+      - id: say-hello
+        title: "Say hello from the terminal"
+      - id: run-a-container
+        title: "Run a container"
+
+# $$name$$ in markdown is replaced with these values at render time.
+variables:
+  name: world

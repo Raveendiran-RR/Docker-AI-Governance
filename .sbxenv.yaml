@@ -1,0 +1,44 @@
+# Docker Sandbox environment for authoring these labs.
+#
+#   sbx env run          # create the sandbox (if needed) and attach to the agent
+#   sbx env rm           # tear it down
+#
+# One command gets you an agent that already knows how to author Simspace
+# content, with Docker inside the sandbox for `docker compose up dev` and both
+# authoring ports on your own browser. Needs sbx 0.39.0 or later; `sbx env` is
+# experimental, so this file's format may still change.
+#
+# Machine-specific tweaks belong in a `local.sbxenv.yaml` (gitignored) passed
+# alongside this one — `sbx env run .sbxenv.yaml local.sbxenv.yaml` — rather than
+# in here, which is shared with everyone who clones the repo.
+
+schemaVersion: "1"
+
+# No `name:` on purpose. It defaults to <agent>-<workspace-basename>, which is
+# unique per lab repo — a fixed name here would make two workshop repos on one
+# machine fight over the same sandbox.
+
+agent: claude
+
+kits:
+  # The authoring skills (authoring-lab, authoring-slidedeck,
+  # importing-slidedeck) plus the guidance, ports, and network rules the
+  # authoring loop needs. They live in the platform repo rather than in here so
+  # they track the Simspace format instead of the age of this repo: `latest` is
+  # re-resolved every time the sandbox is created, so a repo cloned long after
+  # it was generated still authors against the current format.
+  #
+  # Pin to a released version (e.g. `:v1.0.0`) if a workshop needs a fixed
+  # target — you then get the same skills every time, and the same blind spots.
+  - docker.io/dockersamples/simspace-authoring-kit:latest
+
+ports:
+  # `docker compose up dev` — the live preview. Same number on the host so the
+  # URL the skills and the README quote is the URL that works.
+  - sandbox: 5173
+    host: 5173
+  # pulse — presence, analytics, and the instructor insights dashboard at
+  # #/labs/<id>/insights (token `dev-token`). The app's bundled dev config points
+  # at localhost:8888, so this one is not free to move.
+  - sandbox: 8888
+    host: 8888

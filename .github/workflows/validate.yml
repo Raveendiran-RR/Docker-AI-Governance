@@ -1,6 +1,6 @@
-name: Validate lab
+name: Validate labs
 
-# Lints the lab on every pull request (and on demand) so a broken lab is caught
+# Lints every lab on each pull request (and on demand) so a broken lab is caught
 # before it merges — not just at deploy time. Uses the prebuilt authoring image,
 # so there's nothing to install.
 
@@ -16,12 +16,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate lab
-        # Pin the tag to a released version to match your deploy (e.g. ":1").
+      - name: Validate labs
+        # Two fixes vs. the generated version of this file — see the header of
+        # deploy.yml for the full write-up:
+        #
+        # 1. `npm run build:packages &&` — dockersamples/simspace-authoring:latest
+        #    ships its workspace packages without their dist/ build output, so
+        #    validate-lab's esbuild pass fails with
+        #    `Could not resolve "@dockersamples/simspace-simulator"`. Building
+        #    them in-container first fixes it and needs no network. Drop this
+        #    once the authoring image ships dist/ again.
+        # 2. The mount was `lab` (singular); this repo's entries live in `labs/`,
+        #    matching compose.yaml. The old path didn't exist.
+        #
+        # Pinning is not an option today: `latest` is the only published tag.
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/lab:/lab:ro" \
+            -v "${{ github.workspace }}/labs:/labs:ro" \
+            --entrypoint sh \
             "${SIMSPACE_AUTHORING_IMAGE:-dockersamples/simspace-authoring:latest}" \
-            npm run validate-lab -- /lab
+            -c 'npm run build:packages && npm run validate-lab -- /labs'
         env:
           SIMSPACE_AUTHORING_IMAGE: dockersamples/simspace-authoring:latest

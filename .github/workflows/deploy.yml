@@ -1,9 +1,36 @@
-name: Deploy lab to GitHub Pages
+name: Deploy labs to GitHub Pages
 
-# Validates this lab and publishes it to GitHub Pages on every push to main.
-# All the work lives in the reusable workflow in dockersamples/simspace, so this
-# file stays a one-liner. Enable Pages first: Settings → Pages → Source:
-# "GitHub Actions".
+# Vendored from dockersamples/simspace/.github/workflows/deploy-lab.yml@main.
+#
+# WHY THIS IS INLINED INSTEAD OF `uses:` ------------------------------------
+# dockersamples/simspace-authoring:latest (pushed 2026-08-14) ships its
+# workspace packages WITHOUT their build output: node_modules/@dockersamples/
+# simspace-simulator symlinks to packages/simulator, whose package.json
+# "exports" points at ./dist/index.js — and dist/ does not exist in the image
+# (.dockerignore excludes **/dist and the authoring stage never runs a build).
+# So `npm run validate-lab` dies in esbuild with:
+#     Could not resolve "@dockersamples/simspace-simulator"
+# which fails the reusable workflow's `validate` job and blocks the whole
+# Pages deploy. Pinning doesn't help: `latest` is the only published tag.
+#
+# The fix is the `npm run build:packages &&` below, which generates the missing
+# dist/ inside the container before validating. It needs no network.
+#
+# REVERT once upstream adds `RUN npm run build:packages` to the authoring stage
+# of its Dockerfile — replace this whole file with the original one-liner:
+#
+#   jobs:
+#     deploy:
+#       uses: dockersamples/simspace/.github/workflows/deploy-lab.yml@main
+#       with:
+#         labs-dir: labs
+#         runtime-tag: "latest"
+#
+# SECOND FIX — labs-dir was `lab`, but this repo's entries live in `labs/`
+# (see compose.yaml and AGENTS.md). That mounted a non-existent host path, so
+# even with a working image validation would have failed with
+# "No labs found under /labs". LABS_DIR below is `labs`. Keep the revert
+# snippet's `labs-dir: labs` — do not restore the singular form.
 
 on:
   push:
@@ -15,11 +42,82 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+env:
+  LABS_DIR: labs
+  RUNTIME_IMAGE: dockersamples/simspace
+  AUTHORING_IMAGE: dockersamples/simspace-authoring
+  RUNTIME_TAG: "latest"
+  # OPTIONAL — point at a deployed `pulse` backend to enable presence and the
+  # instructor dashboard. Leave empty to deploy with tracking disabled.
+  PULSE_ENDPOINT: ""
+
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate labs
+        # `npm run build:packages` is the workaround described at the top of
+        # this file — it builds the workspace packages' missing dist/ so
+        # validate-lab's esbuild pass can resolve them. Drop it once the
+        # authoring image ships dist/ again.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/${LABS_DIR}:/labs:ro" \
+            --entrypoint sh \
+            "${AUTHORING_IMAGE}:${RUNTIME_TAG}" \
+            -c 'npm run build:packages && npm run validate-lab -- /labs'
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Assemble static site (runtime payload + these labs + catalog)
+        run: |
+          set -euo pipefail
+          image="${RUNTIME_IMAGE}:${RUNTIME_TAG}"
+          docker pull "$image"
+          cid="$(docker create "$image")"
+          mkdir -p site
+          docker cp "$cid":/usr/share/nginx/html/. site/
+          docker rm "$cid"
+          # Replace the runtime image's sample labs + catalog with this repo's.
+          rm -rf site/labs site/labs.json
+          mkdir -p site/labs
+          cp -R "${LABS_DIR}/." site/labs/
+          # Generate labs.json for these labs (from each labspace.yaml).
+          # generate-catalog is plain .mjs and does not import the workspace
+          # packages, so it needs no build step.
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            "${AUTHORING_IMAGE}:${RUNTIME_TAG}" \
+            npm run generate-catalog -- "/work/${LABS_DIR}" /work/site/labs.json
+      - name: Configure the tracking endpoint (config.json)
+        run: |
+          set -euo pipefail
+          if [ -n "${PULSE_ENDPOINT}" ]; then
+            printf '{\n  "tracking": {\n    "endpoint": "%s",\n    "presence": true,\n    "identity": "optional-name"\n  }\n}\n' \
+              "${PULSE_ENDPOINT}" > site/config.json
+            echo "Tracking enabled → ${PULSE_ENDPOINT}"
+          else
+            rm -f site/config.json
+            echo "No PULSE_ENDPOINT set; tracking disabled."
+          fi
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
   deploy:
-    uses: dockersamples/simspace/.github/workflows/deploy-lab.yml@main
-    with:
-      labs-dir: lab
-      # Pin to a released version for stable labs, e.g. "1". "latest" tracks the
-      # newest runtime — convenient, but the app can change under you.
-      runtime-tag: "latest"
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

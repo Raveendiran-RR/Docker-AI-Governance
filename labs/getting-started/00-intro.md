@@ -1,71 +1,59 @@
-# Hardened by Default : Docker Hardened Images and AI Governance
+# DHI & AI Governance: Secure Supply Chain to Sandbox
 
-🙏 Welcome to the demo/lab session :  **Hardened By Default** where we will learn how to get started with **Docker harnedened Images and AI Governance**
+## What we're covering
 
-## Docker Hardened Images — why they matter
-Docker Hardened Images are secure, minimal, production-ready images with near-zero CVEs and an enterprise-grade SLA for rapid remediation. They follow a distroless philosophy, removing unnecessary components to significantly reduce the attack surface:
-
-- Near-zero exploitable CVEs — continuously updated and published with signed attestations to eliminate patch fatigue and false positives
-- Seamless migration — drop-in replacements for popular base images, with -dev variants for multi-stage builds
-- Up to 95% smaller attack surface — no shells, no package managers, no OS noise
-- Built-in supply chain security — signed SBOMs, VEX documents, and SLSA provenance for audit-ready pipelines
-
-## Docker AI Governance
-
-AI agents such as Claude, Copilot, Cursor, custom MCP servers run with the same blast radius as the developer running them. That means access to your filesystem, your secrets, your network, your everything.
-
-This is fine when the agent does what you expect. It's a disaster when:
-
-- A prompt-injected agent uploads SSH keys to paste.ee
-- A misconfigured MCP server exfiltrates source code to an unknown destination
-- An agent acting on hallucinated instructions pushes a malicious commit to main
-- A coding agent reads your .env and posts it to the model API alongside your code
-
-Today's demo we would show how Docker AI Governance helps your mitigate this issue
-
-let's begin !!
-
-## Docker AI Governance Demo
-
-> **First: set your Docker org name below. Every command in this demo updates automatically.**
-::variableDefinition[org]{promt="what is your org"}
----
-
-## What we'll cover
-
-| # | Section | What you'll see |
-|---|---------|-----------------|
-| 01 | **DHI — Product Catalog** | Scout CVEs on community vs hardened Node.js. SBOM, FIPS/STIG, VEX. CI fails then passes. |
-| 02 | **Sandbox & AI Governance** | Claude Code in an isolated microVM. Network, filesystem, MCP policies. Claude fixes the product item code bug. |
-| 03 | **Org Policies & DHI MCP** | Org context, policy diff, DHI MCP server. Claude resolves the Scout failure automatically. |
+This lab walks through the complete Docker security story — from trusted base images through to AI agent governance. By the end you'll have seen how Docker Hub Integration (DHI), Docker Scout, and Docker Sandboxes work together to enforce policy at every layer of the development lifecycle.
 
 ---
 
-## Step 1 — Authenticate
+## The problem space
 
-```bash
-docker login --username $$org$$
+Modern software development has two intersecting governance challenges:
+
+**Supply chain risk**
+
+Every container image you build starts with a base image. That base image carries packages, libraries, and an OS — each with its own CVE surface. Most teams have no automated gate between "we discovered a critical CVE" and "that CVE ships to production."
+
+**AI agent risk**
+
+AI coding agents can read, write, and execute — and they do it fast. Without guardrails, an agent running inside a developer's environment can exfiltrate source code, make network calls to arbitrary domains, or install malicious packages. The blast radius of a compromised or misbehaving agent is the full host filesystem and network.
+
+---
+
+## The Docker answer
+
+| Challenge | Docker solution |
+|---|---|
+| Unvetted base images | **DHI** — Docker Hub Integration serves FIPS-validated, STIG-hardened images via `dhi.io` |
+| No CVE gating in CI | **Docker Scout** — policy checks block the pipeline if images fail |
+| Missing SBOM / provenance | **Scout attestations** — SBOM + SLSA provenance attached at build time |
+| AI agents without boundaries | **Docker Sandboxes** — microVM isolation, network/filesystem/MCP policies, credential proxy, audit log |
+
+---
+
+## Lab flow
+
+```text no-run-button
+Org setup           Org login → Docker Scout enabled → policies defined
+    ↓
+Product catalog     Clone → build (node:18-alpine) → CVE scan → policy FAIL
+    ↓
+DHI hardening       Switch to dhi.io/node:24-alpine → CVE scan → policy PASS
+    ↓
+SBOM / VEX          Inspect attestations, SBOM, VEX statements, FIPS / STIG metadata
+    ↓
+Sandbox setup       Install sbx → configure network / filesystem / MCP policies
+    ↓
+AI bug fix          Claude Code (in sandbox) finds & fixes product pricing bug
+    ↓
+CI green            Patched image passes all 5 Docker Scout policies → push → CI ✓
 ```
 
 ---
 
-## Step 2 — Configure Scout org
+> **Everything in the terminal is simulated.**  
+> Click **Run** on any code block to send the command to the simulated terminal.
 
-```bash
-docker scout config organization $$org$$
-```
+> **Demo reset**: at any point, type `demo reset` in either terminal to wipe all lab state and start fresh from Section 2.
 
----
-
-## Step 3 — Review the Scout policy set
-
-```bash
-docker scout policy --org $$org$$
-```
-
-> **Policies enforced throughout this demo:**
-> - No fixable critical CVEs
-> - SBOM attestation must be present
-> - SLSA provenance attestation must be present
-> - Image must be signed (cosign)
-> - Container must run as a non-root user
+[Continue to Section 2 → Org Setup & Scout Policies](#/2-org-setup-scout-policies)

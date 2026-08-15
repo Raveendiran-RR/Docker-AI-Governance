@@ -249,7 +249,7 @@ Every policy that previously failed now passes:
 | No critical/high CVEs | ✗ 14 found | ✓ 0 found |
 | Supply chain attestations | ✗ missing | ✓ present |
 | No fixable vulnerabilities | ✗ 35 fixable | ✓ 0 fixable |
-| Approved base images | ✗ node:18-alpine | ✓ dhi.io/node:24-alpine |
+| Approved base images | ✗ `node:18-alpine` | ✓ `dhi.io/node:24-alpine` |
 | Default non-root user | ✗ missing | ✓ USER node |
 
 ---

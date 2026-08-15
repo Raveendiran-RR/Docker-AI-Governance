@@ -1,1560 +1,1272 @@
-version: '2.0'
-metadata:
-  id: docker-ai-governance-demo
-  title: Docker AI Governance Demo
-  summary: 'From a community-based Node.js catalog service to a hardened, attested, policy-gated artifact — then the same governance extended to the AI agent that fixes and ships it, via Docker Sandboxes
-    and the DHI MCP server.
+version: "2.0"
 
-    '
+metadata:
+  id: dhi-ai-governance
+  title: "DHI & AI Governance: Secure Supply Chain to Sandbox"
+  summary: >
+    Walk through Docker Hub Integration hardened images, Docker Scout CVE and
+    policy enforcement, CI/CD security gates, SBOM/VEX/attestations, and
+    Docker Sandboxes for AI agent governance.
+
 state:
-  org: org
-  scout:
-    orgSet: false
-  dhi:
-    imageBuilt: false
-  ci:
-    policyPassed: false
-  sandbox:
-    started: false
-    mcpAdded: false
-  orgCtx:
-    active: false
-  demo:
-    reset: false
+  logged_in: false
+  org_set: false
+  configured_org: "dockerdemo"      # updated when user runs docker scout enroll / config organization
+  repo_cloned: false
+  image_built: false
+  services_up: false
+  sbx_policy_mode: "org"            # "org" = Hub-managed policies; "local" = sbx defaults only
+  sbx_installed: false
+  sbx_started: false
+  bug_found: false
+  bug_fixed: false
+  image_patched: false
+
 settings:
   pace:
-    pull: 1800
-    build: 2800
-    scan: 2200
-    short: 600
-controls:
-- id: reset-all
-  label: Reset demo — clear all state
-  description: Toggle ON to reset every state flag to its initial value. Restores the community Dockerfile, clears MCP registration, sandbox, org context, and CI state. Toggle back OFF after reset.
-  state: demo.reset
-  enabled: false
-  disabled: true
-- id: org-governance
-  label: Org AI Governance — enforced
-  description: Master switch. On = org policies active (org context). Off = local only, no DHI image requirement, no MCP pre-registration.
-  state: orgCtx.active
-  enabled: true
-  disabled: false
-- id: dhi-image
-  label: DHI base image — applied
-  description: Simulate the Dockerfile already switched to the hardened image. On = cat Dockerfile shows DHI base, git push triggers CI pass. Off = community image, CI fails.
-  state: dhi.imageBuilt
-  enabled: true
-  disabled: false
-- id: mcp-registered
-  label: DHI MCP server — registered
-  description: Pre-register the DHI MCP server in the sandbox. On = Claude can query the DHI catalog immediately. Off = MCP not yet added.
-  state: sandbox.mcpAdded
-  enabled: true
-  disabled: false
-- id: sandbox-started
-  label: Sandbox — running
-  description: Mark the sandbox as already started. On = sbx ps shows a running sandbox. Off = no sandbox running.
-  state: sandbox.started
-  enabled: true
-  disabled: false
+    pull: 1400
+    build: 900
+    clone: 700
+    short: 200
+
 defaults:
   unmatched:
-    stderr:
-    - command not found — this command isn't part of the demo.
-    exit: 1
+    stderr: ["bash: command not found. Try running a command from the lab steps."]
+    exit: 127
+
+# ─────────────────────────────────────────
+# SETTINGS — learner-facing toggles (shown in the Settings dialog next to Reset)
+# ─────────────────────────────────────────
+controls:
+  - id: sbx-policy-mode
+    label: "Sandbox policy source"
+    description: >
+      Org: Docker Hub-managed policies — network default-deny, filesystem
+      restrictions, MCP allowlist, and full audit logging enforced for every
+      sandbox in your org. Local: sbx CLI defaults only — no org restrictions,
+      no audit stream.
+    state: sbx_policy_mode
+    enabled: "org"
+    disabled: "local"
+
+# ─────────────────────────────────────────
+# CI WORKFLOWS — referenced by then.ci in git push scenarios
+# ─────────────────────────────────────────
 workflows:
-- id: ci-fail
-  name: CI
-  conclusion: failure
-  jobs:
-  - id: build
-    name: Build
-    conclusion: success
+  - id: product-catalog-ci
+    name: "Product Catalog CI"
+    on: push
     steps:
-    - name: actions/checkout@v4
-      conclusion: success
-    - name: docker build -t catalog-service .
-      conclusion: success
-  - id: policy-gate
-    name: Scout Policy Gate
-    conclusion: failure
-    needs:
-    - build
-    steps:
-    - name: docker/scout-action@v1
-      conclusion: failure
-      output: '✗ no-critical-cves     FAILED  2 fixable CRITICALs (braces, axios)
+      - id: checkout
+        name: "actions/checkout@v4"
+        logs:
+          - "Cloning into workspace..."
+          - "HEAD is now at abc1234."
 
-        ✗ require-sbom         FAILED  no SBOM attestation
+      - id: build
+        name: "Build image"
+        logs:
+          - "$ docker build -t product-catalog:${{ github.sha }} ."
+          - "[+] Building 42.3s (12/12) FINISHED"
+          - "=> naming to docker.io/library/product-catalog:abc1234"
 
-        ✗ require-provenance   FAILED  no provenance attestation
+      - id: scout-cves
+        name: "Docker Scout — CVE scan"
+        requires: image_patched
+        logs:
+          - "$ docker scout cves product-catalog:abc1234 --only-severities critical,high --exit-code"
+          - "✓  0 critical, 0 high CVEs found"
+          - "Exit code: 0"
+        failure:
+          error: "3 critical, 11 high CVEs detected in node:18-alpine — pipeline blocked."
+          logs:
+            - "$ docker scout cves product-catalog:abc1234 --only-severities critical,high --exit-code"
+            - "✗  Found 3 critical, 11 high CVEs"
+            - "   openssl  CVE-2024-0727  CRITICAL  9.1"
+            - "   libssl3  CVE-2023-5363  CRITICAL  9.1"
+            - "   busybox  CVE-2023-42363 CRITICAL  9.8"
+            - "   ... and 11 high severity CVEs"
+            - "Error: Process completed with exit code 1."
 
-        ✗ image-signed         FAILED  no cosign signature
+      - id: scout-policy
+        name: "Docker Scout — policy gate"
+        requires: image_patched
+        logs:
+          - "$ docker scout policy product-catalog:abc1234 --exit-code"
+          - "Policy status  PASS"
+          - "✓  5 / 5 policies satisfied"
+          - "Exit code: 0"
+        failure:
+          error: "0 / 5 Scout policies satisfied — image blocked from registry."
+          logs:
+            - "$ docker scout policy product-catalog:abc1234 --exit-code"
+            - "Policy status  FAIL"
+            - "✗  0 / 5 policies satisfied"
+            - "Error: Process completed with exit code 1."
 
-        Policy status: FAILED (0 of 4 policies met)
+      - id: push-image
+        name: "Push to registry"
+        requires: image_patched
+        logs:
+          - "$ docker push dockersamples/product-catalog:abc1234"
+          - "The push refers to repository docker.io/dockersamples/product-catalog"
+          - "abc1234: digest: sha256:9f8e7d6c5b4a... size: 1847"
+        failure:
+          error: "Push skipped — upstream step failed."
+          logs:
+            - "Step skipped due to upstream failure."
 
-        '
-  - id: push
-    name: Push
-    conclusion: skipped
-    needs:
-    - policy-gate
-    steps:
-    - name: docker push [org]/catalog-service:latest
-      conclusion: skipped
-  - id: deploy
-    name: Deploy
-    conclusion: skipped
-    needs:
-    - push
-    steps:
-    - name: deploy.sh
-      conclusion: skipped
-- id: ci-pass
-  name: CI
-  conclusion: success
-  jobs:
-  - id: build
-    name: Build
-    conclusion: success
-    steps:
-    - name: actions/checkout@v4
-      conclusion: success
-    - name: docker build -t catalog-service . (sbom + provenance attached)
-      conclusion: success
-  - id: policy-gate
-    name: Scout Policy Gate
-    conclusion: success
-    needs:
-    - build
-    steps:
-    - name: docker/scout-action@v1
-      conclusion: success
-      output: '✔ no-critical-cves     PASSED
-
-        ✔ require-sbom         PASSED  sbom attestation present
-
-        ✔ require-provenance   PASSED  slsa-provenance mode=max
-
-        ✔ image-signed         PASSED  cosign signature verified
-
-        Policy status: PASSED (4 of 4 policies met)
-
-        '
-  - id: push
-    name: Push
-    conclusion: success
-    needs:
-    - policy-gate
-    steps:
-    - name: docker push catalog-service:a9d0e42
-      conclusion: success
-      output: attestations bound to digest sha256:9e2b71c4a0f8
-  - id: deploy
-    name: Deploy
-    conclusion: success
-    needs:
-    - push
-    steps:
-    - name: deploy.sh
-      conclusion: success
-      output: catalog-service:a9d0e42 live in production
 scenarios:
-- id: demo-reset
-  when:
-    command:
-    - demo
-    - reset
-  then:
-    state:
-      scout.orgSet: false
-      dhi.imageBuilt: false
-      ci.policyPassed: false
-      sandbox.started: false
-      sandbox.mcpAdded: false
-      orgCtx.active: false
-      org: myorg
-    files:
-    - create: Dockerfile
-      content: 'FROM node:22-alpine
 
+  # ─────────────────────────────────────────
+  # DEMO RESET — works from any terminal, any section
+  # ─────────────────────────────────────────
 
-        WORKDIR /app
+  - id: demo-reset
+    when:
+      command: [demo, reset]
+    then:
+      state:
+        logged_in: false
+        org_set: false
+        configured_org: "dockerdemo"
+        repo_cloned: false
+        image_built: false
+        services_up: false
+        sbx_policy_mode: "org"
+        sbx_installed: false
+        sbx_started: false
+        bug_found: false
+        bug_fixed: false
+        image_patched: false
+      output:
+        - "  ╔══════════════════════════════════════════════════════╗"
+        - "  ║            Demo Reset — State Cleared                ║"
+        - "  ╚══════════════════════════════════════════════════════╝"
+        - ""
+        - "  ✓  Docker login          cleared"
+        - "  ✓  Scout org             reset → dockerdemo"
+        - "  ✓  Repository            cleared"
+        - "  ✓  Images                cleared"
+        - "  ✓  Sandbox policy mode   org (default)"
+        - "  ✓  Sandbox               stopped"
+        - "  ✓  Bug fix state         cleared"
+        - "  ✓  Image patch state     cleared"
+        - ""
+        - "  Lab is back at initial state."
+        - "  Start from Section 2 — Org Setup & Scout Policies."
 
+  # ─────────────────────────────────────────
+  # SECTION 2 — Org Setup
+  # ─────────────────────────────────────────
 
-        COPY package*.json ./
+  # Specific (with -u flag) BEFORE the bare catch-all — first-match-wins
+  - id: docker-login-with-user
+    when:
+      command: [docker, login]
+      args:
+        -u: { any: true }
+    then:
+      state: { logged_in: true }
+      output:
+        - "Authenticating with existing credentials..."
+        - "Login Succeeded"
 
-        RUN npm ci --omit=dev
+  - id: docker-login
+    when:
+      command: [docker, login]
+    then:
+      state: { logged_in: true }
+      output:
+        - "Authenticating with existing credentials..."
+        - { text: "WARNING! Your password will be stored unencrypted in /root/.docker/config.json.", delay: short }
+        - { text: "Configure a credential helper to remove this warning. See", delay: short }
+        - { text: "https://docs.docker.com/engine/reference/commandline/login/#credentials-store", delay: short }
+        - ""
+        - "Login Succeeded"
 
+  - id: docker-scout-enroll
+    when:
+      command: [docker, scout, enroll]
+      args:
+        0: { any: true }
+    then:
+      state: { configured_org: "{{ args.0 }}" }
+      output:
+        - "    ✓  Successfully enrolled organization '{{ args.0 }}' in Docker Scout"
+        - "    ✓  Docker Scout is now active for all repositories in this organization"
 
-        COPY src/ ./src/
+  - id: docker-scout-config-org
+    when:
+      command: [docker, scout, config, organization]
+      args:
+        0: { any: true }
+    then:
+      state: { org_set: true, configured_org: "{{ args.0 }}" }
+      output:
+        - "    ✓  Organization set to '{{ args.0 }}'"
+        - ""
+        - "Docker Scout will now evaluate images against your organization's policies."
+        - "Run 'docker scout policy ls' to see active policies."
 
+  # docker scout policy ls — must come BEFORE the generic `docker scout policy` catch-all
+  - id: docker-scout-policy-ls
+    when:
+      command: [docker, scout, policy, ls]
+    then:
+      output:
+        - "  NAME                                   STATUS    DESCRIPTION"
+        - "  ─────────────────────────────────────────────────────────────────────────────────────────"
+        - "  No critical or high-profile CVEs       enabled   Fail if critical or high CVEs are present"
+        - "  Supply chain attestations              enabled   Require SBOM + provenance attestation"
+        - "  No fixable vulnerabilities             enabled   Fail if fixable CVEs exist"
+        - "  Approved base images                   enabled   Only allow images from approved registries"
+        - "  Default non-root user                  enabled   Container must not run as root"
+        - ""
+        - "  5 policies active for organization '{{ state.configured_org }}'"
+        - "  Manage policies at: https://hub.docker.com/orgs/{{ state.configured_org }}/scout/policies"
 
-        EXPOSE 3000
+  # ─────────────────────────────────────────
+  # SECTION 3 — Product Catalog
+  # ─────────────────────────────────────────
 
-        CMD ["node", "src/index.js"]
+  - id: git-clone-product-catalog
+    when:
+      command: [git, clone]
+      args:
+        0: { any: true }
+    then:
+      state: { repo_cloned: true }
+      output:
+        - "Cloning into 'product-catalog'..."
+        - { text: "remote: Enumerating objects: 187, done.", delay: clone }
+        - "remote: Counting objects: 100% (187/187), done."
+        - "remote: Compressing objects: 100% (112/112), done."
+        - { text: "Receiving objects: 100% (187/187), 48.3 KiB | 1.2 MiB/s, done.", delay: clone }
+        - "Resolving deltas: 100% (63/63), done."
 
-        '
-    output:
-    - ''
-    - "\e[32m✔  Demo reset to initial state.\e[0m"
-    - ''
-    - "  \e[2mState cleared:\e[0m"
-    - '    scout.orgSet        → false'
-    - '    dhi.imageBuilt      → false'
-    - '    ci.policyPassed     → false'
-    - '    sandbox.started     → false'
-    - '    sandbox.mcpAdded    → false'
-    - '    orgCtx.active       → false'
-    - ''
-    - "  \e[2mFiles restored:\e[0m"
-    - '    Dockerfile          → FROM node:22-alpine (community image)'
-    - ''
-    - '  Navigate back to Section 01 to start again.'
-    - ''
-- id: set-org-variable
-  when:
-    variableDefinition: org
-  then:
-    state:
-      org: '{{ variables.org }}'
-    output: []
-- id: settings-reset
-  when:
-    state:
-      demo.reset: true
-  then:
-    state:
-      demo.reset: false
-      scout.orgSet: false
-      dhi.imageBuilt: false
-      ci.policyPassed: false
-      sandbox.started: false
-      sandbox.mcpAdded: false
-      orgCtx.active: false
-    files:
-    - create: Dockerfile
-      content: 'FROM node:22-alpine
+  # ls — scalar string equals (spec §6.2); unlisted paths fall through to built-in ls
+  - id: ls-product-catalog
+    when:
+      command: [ls]
+      args:
+        0: "product-catalog/"
+    then:
+      output:
+        - "Dockerfile  Dockerfile.dhi  README.md  docker-compose.yml"
+        - "package.json  package-lock.json  src/  .github/"
 
+  - id: ls-product-catalog-no-slash
+    when:
+      command: [ls]
+      args:
+        0: "product-catalog"
+    then:
+      output:
+        - "Dockerfile  Dockerfile.dhi  README.md  docker-compose.yml"
+        - "package.json  package-lock.json  src/  .github/"
 
-        WORKDIR /app
+  # cat — specific paths override built-in; unlisted paths fall through to built-in cat (reads virtual FS)
+  - id: cat-dockerfile
+    when:
+      command: [cat]
+      args:
+        0: "product-catalog/Dockerfile"
+    then:
+      output:
+        - "# syntax=docker/dockerfile:1"
+        - ""
+        - "FROM node:18-alpine AS build"
+        - "WORKDIR /app"
+        - "COPY package*.json ./"
+        - "RUN npm ci --only=production"
+        - "COPY src/ ./src/"
+        - ""
+        - "FROM node:18-alpine"
+        - "WORKDIR /app"
+        - "COPY --from=build /app ./"
+        - "EXPOSE 8080"
+        - "CMD [\"node\", \"src/index.js\"]"
 
+  - id: cat-products-route
+    when:
+      command: [cat]
+      args:
+        0: "product-catalog/src/routes/products.js"
+    then:
+      output:
+        - "const express = require('express');"
+        - "const router = express.Router();"
+        - "const db = require('../db');"
+        - ""
+        - "router.get('/', async (req, res) => {"
+        - "  const products = await db.query("
+        - "    'SELECT id, name, price, discount_rate, image_url, category FROM products ORDER BY id'"
+        - "  );"
+        - "  res.json(products.rows);"
+        - "});"
+        - ""
+        - "router.get('/:id', async (req, res) => {"
+        - "  const { id } = req.params;"
+        - "  const result = await db.query('SELECT * FROM products WHERE id = $1', [id]);"
+        - "  const product = result.rows[0];"
+        - "  if (!product) return res.status(404).json({ error: 'Not found' });"
+        - ""
+        - "  // BUG: should be price * (1 - discount_rate)"
+        - "  product.final_price = product.price * product.discount_rate;"
+        - ""
+        - "  res.json(product);"
+        - "});"
+        - ""
+        - "module.exports = router;"
 
-        COPY package*.json ./
+  - id: ci-pipeline-output
+    when:
+      command: [cat]
+      args:
+        0: "ci-output.log"
+    then:
+      output:
+        - "Run docker/scout-action@v1"
+        - "  with:"
+        - "    command: policy"
+        - "    image: product-catalog:abc1234"
+        - "    exit-code: true"
+        - ""
+        - "    ✓  Image analyzed: product-catalog:abc1234"
+        - "    ✓  Organization: {{ state.configured_org }}"
+        - ""
+        - "    Policy status  FAIL  ─────────────────────────────────────────"
+        - "                   ✗  No critical or high-profile CVEs   FAIL"
+        - "                   ✗  Supply chain attestations           FAIL"
+        - "                   ✗  No fixable vulnerabilities          FAIL"
+        - "                   ✗  Approved base images                FAIL"
+        - "                   ✗  Default non-root user               FAIL"
+        - ""
+        - "    Result: 0 / 5 policies satisfied"
+        - ""
+        - "Error: Process completed with exit code 1."
+        - ""
+        - "  ✗ Job 'build' failed at step 'Docker Scout — policy gate'"
+        - "  View run at: https://github.com/dockersamples/product-catalog/actions/runs/..."
 
-        RUN npm ci --omit=dev
+  # docker build — specific tag match BEFORE the bare catch-all (first-match-wins)
+  - id: docker-build-patched
+    when:
+      command: [docker, build]
+      args:
+        -t: "product-catalog:dhi"
+    then:
+      state: { image_patched: true }
+      output:
+        - "[+] Building 38.1s (12/12) FINISHED                    docker:default"
+        - " => [internal] load build definition from Dockerfile.dhi               0.1s"
+        - { text: " => [internal] load metadata for dhi.io/node:24-alpine             1.8s", delay: short }
+        - { text: " => [build 1/4] FROM dhi.io/node:24-alpine@sha256:7f2c...          3.2s", delay: short }
+        - { text: " => [build 2/4] WORKDIR /app                                       0.1s", delay: short }
+        - { text: " => [build 3/4] COPY package*.json ./                              0.2s", delay: short }
+        - { text: " => [build 4/4] RUN npm ci --only=production                      16.9s", delay: build }
+        - { text: " => [stage-2 1/3] COPY --from=build /app ./                        0.2s", delay: short }
+        - { text: " => exporting to image                                              1.4s", delay: short }
+        - " => => naming to docker.io/library/product-catalog:dhi"
+        - ""
+        - "    ✓  Base image: dhi.io/node:24-alpine (FIPS + STIG)"
+        - "    ✓  Image size: 142MB (vs 198MB with node:18-alpine)"
+        - ""
+        - "What's next:"
+        - "    Verify the fix → docker scout policy product-catalog:dhi"
 
+  - id: docker-build-product-catalog
+    when:
+      command: [docker, build]
+    then:
+      state: { image_built: true }
+      output:
+        - "[+] Building 42.3s (12/12) FINISHED                    docker:default"
+        - " => [internal] load build definition from Dockerfile                 0.1s"
+        - " => => transferring dockerfile: 312B                                 0.0s"
+        - " => [internal] load .dockerignore                                    0.0s"
+        - { text: " => [internal] load metadata for docker.io/library/node:18-alpine  2.1s", delay: short }
+        - " => [build 1/4] FROM docker.io/library/node:18-alpine@sha256:a4b...  0.0s"
+        - { text: " => [build 2/4] WORKDIR /app                                        0.1s", delay: short }
+        - { text: " => [build 3/4] COPY package*.json ./                               0.2s", delay: short }
+        - { text: " => [build 4/4] RUN npm ci --only=production                       18.4s", delay: build }
+        - { text: " => [stage-2 1/2] COPY --from=build /app ./                        0.3s", delay: short }
+        - " => exporting to image                                               1.8s"
+        - " => => exporting layers                                              1.7s"
+        - " => => writing image sha256:3f8c...                                  0.0s"
+        - " => => naming to docker.io/library/product-catalog:latest            0.0s"
+        - ""
+        - " View build details: docker-desktop://dashboard/build/..."
+        - ""
+        - "What's next:"
+        - "    View a summary of image vulnerabilities and recommendations → docker scout quickview product-catalog:latest"
 
-        COPY src/ ./src/
+  - id: docker-compose-up
+    when:
+      command: [docker, compose, up]
+    then:
+      state: { services_up: true }
+      output:
+        - "[+] Running 3/3"
+        - { text: " ✔ Network product-catalog_default       Created          0.1s", delay: short }
+        - { text: " ✔ Container product-catalog-postgres-1  Healthy          2.3s", delay: short }
+        - { text: " ✔ Container product-catalog-app-1       Started          2.6s", delay: short }
+        - ""
+        - "product-catalog-app-1  | Server running on http://0.0.0.0:8080"
+        - "product-catalog-app-1  | Database connected: postgresql://localhost/products"
+        - "product-catalog-app-1  | Loaded 12 products from seed data"
 
+  # curl — specific paths first; scalar string equals (spec §6.2)
+  - id: curl-product-item
+    when:
+      command: [curl]
+      args:
+        0: "http://localhost:8080/api/products/1"
+    then:
+      output:
+        - "{"
+        - "  \"id\": 1,"
+        - "  \"name\": \"Widget Pro\","
+        - "  \"price\": 99.99,"
+        - "  \"discount_rate\": 0.2,"
+        - "  \"category\": \"tools\","
+        - "  \"image_url\": \"/images/widget-pro.png\","
+        - "  \"final_price\": 20.00"
+        - "}"
+        - ""
+        - "# NOTE: Something looks wrong!"
+        - "# price=$99.99, discount=20% → final_price should be $79.99"
+        - "# But final_price shows $20.00 (price * discount_rate instead of price * (1 - discount_rate))"
 
-        EXPOSE 3000
+  - id: curl-product-2
+    when:
+      command: [curl]
+      args:
+        0: "http://localhost:8080/api/products/4"
+    then:
+      output:
+        - "{"
+        - "  \"id\": 4,"
+        - "  \"name\": \"Thingamajig Plus\","
+        - "  \"price\": 199.99,"
+        - "  \"discount_rate\": 0.25,"
+        - "  \"final_price\": 50.00"
+        - "}"
+        - ""
+        - "# price=$199.99, discount=25% → should be $149.99, showing $50.00 ← BUG"
 
-        CMD ["node", "src/index.js"]
+  - id: curl-products-list
+    when:
+      command: [curl]
+      args:
+        0: "http://localhost:8080/api/products"
+    then:
+      output:
+        - "["
+        - "  {\"id\":1,\"name\":\"Widget Pro\",\"price\":99.99,\"discount_rate\":0.2,\"category\":\"tools\",\"image_url\":\"/images/widget-pro.png\"},"
+        - "  {\"id\":2,\"name\":\"Gadget Ultra\",\"price\":149.99,\"discount_rate\":0.15,\"category\":\"electronics\",\"image_url\":\"/images/gadget-ultra.png\"},"
+        - "  {\"id\":3,\"name\":\"Doohickey Deluxe\",\"price\":49.99,\"discount_rate\":0.0,\"category\":\"accessories\",\"image_url\":\"/images/doohickey.png\"},"
+        - "  {\"id\":4,\"name\":\"Thingamajig Plus\",\"price\":199.99,\"discount_rate\":0.25,\"category\":\"tools\",\"image_url\":\"/images/thingamajig.png\"},"
+        - "  ... (12 products total)"
+        - "]"
 
-        '
-    output:
-    - ''
-    - "\e[32m✔  All state reset to initial values.\e[0m"
-    - ''
-    - '  scout.orgSet        → false'
-    - '  dhi.imageBuilt      → false'
-    - '  ci.policyPassed     → false'
-    - '  sandbox.started     → false'
-    - '  sandbox.mcpAdded    → false'
-    - '  orgCtx.active       → false'
-    - ''
-    - '  Dockerfile restored → FROM node:22-alpine'
-    - ''
-    - '  Navigate to Section 01 to start from the beginning.'
-    - ''
-- id: docker-version
-  when:
-    command:
-    - docker
-    - version
-  then:
-    output:
-    - 'Client:'
-    - ' Version:    29.6.2'
-    - 'Server:'
-    - ' Version:    29.6.2'
-- id: docker-context-use
-  when:
-    command:
-    - docker
-    - context
-    - use
-    args:
-      0:
-        any: true
-  then:
-    state:
-      scout.orgSet: true
-    output:
-    - ✔  Context "{{ args.0 }}" selected.
-    - '   All subsequent commands will run under this organization context.'
-- id: docker-login-username
-  when:
-    command:
-    - docker
-    - login
-    args:
-      --username:
-        any: true
-  then:
-    output:
-    - 'Password:'
-    - Login Succeeded
-    - ''
-    - Logging in with your password grants your terminal complete access
-    - to your account. For better security, use a personal access token.
-    state:
-      org: '{{ args.username }}'
-- id: docker-login-org
-  when:
-    command:
-    - docker
-    - login
-    args:
-      --org:
-        any: true
-  then:
-    state:
-      org.contextSet: true
-      org: '{{ args.org }}'
-    output:
-    - '✔  Switched to org context: {{ args.org }}'
-    - '   Org policies and DHI image namespace are now active.'
-    - '   Sandbox agents started in this context inherit the org policy set.'
-- id: docker-login-bare
-  when:
-    command:
-    - docker
-    - login
-  then:
-    output:
-    - Authenticating with existing credentials...
-    - Login Succeeded
-- id: docker-scout-config-org
-  when:
-    command:
-    - docker
-    - scout
-    - config
-    args:
-      0:
-        oneOf:
-        - organization
-      1:
-        any: true
-  then:
-    state:
-      scout.orgSet: true
-      org: '{{ args.1 }}'
-    output:
-    - '    ✓ organization set to {{ args.1 }}'
-- id: docker-scout-config-org-positional
-  when:
-    command:
-    - docker
-    - scout
-    - config
-    - organization
-    args:
-      0:
-        any: true
-  then:
-    state:
-      scout.orgSet: true
-      org: '{{ args.0 }}'
-    output:
-    - '    ✓ organization set to {{ args.0 }}'
-- id: docker-scout-policy-list
-  when:
-    command:
-    - docker
-    - scout
-    - policy
-    args:
-      --org:
-        any: true
-  then:
-    output:
-    - '    ✓ Fetching policy set for {{ args.org }}'
-    - ''
-    - '  Policy Set: Supply Chain Security'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  NAME                              STATUS       APPLIES TO'
-    - '  No fixable critical CVEs          evaluating   All images'
-    - '  No known exploited CVEs (KEV)     evaluating   All images'
-    - '  SBOM attestation present          evaluating   All images'
-    - '  Provenance attestation present    evaluating   All images'
-    - '  Image signed (cosign)             evaluating   Production images'
-    - '  Default non-root user             evaluating   All images'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  Run ''docker scout cves <image>'' to evaluate a specific image.'
-- id: cat-dockerfile-before
-  when:
-    command:
-    - cat
-    - Dockerfile
-    state:
-      dhi.imageBuilt: false
-  then:
-    output:
-    - FROM node:22-alpine
-    - ''
-    - WORKDIR /app
-    - ''
-    - COPY package*.json ./
-    - RUN npm ci --omit=dev
-    - ''
-    - COPY src/ ./src/
-    - ''
-    - EXPOSE 3000
-    - CMD ["node", "src/index.js"]
-- id: cat-dockerfile-after
-  when:
-    command:
-    - cat
-    - Dockerfile
-    state:
-      dhi.imageBuilt: true
-  then:
-    output:
-    - FROM {{ state.org }}/dhi-node:22
-    - ''
-    - WORKDIR /app
-    - ''
-    - COPY package*.json ./
-    - RUN npm ci --omit=dev
-    - ''
-    - COPY src/ ./src/
-    - ''
-    - EXPOSE 3000
-    - CMD ["node", "src/index.js"]
-- id: cat-new-dockerfile
-  when:
-    command:
-    - cat
-    - newDockerfile
-  then:
-    output:
-    - '# Docker Hardened Image — optimised for production'
-    - '# Replaces: FROM node:22-alpine'
-    - '#'
-    - '# What changes:'
-    - '#   - Distroless base: no shell, no package manager at runtime'
-    - '#   - 0 CRITICAL / 0 HIGH CVEs  (vs 2 CRITICAL in node:22-alpine)'
-    - '#   - FIPS 140-2 validated cryptography'
-    - '#   - STIG v1R4 compliant'
-    - '#   - SBOM, SLSA provenance, and cosign signature attached at build'
-    - '#   - Default non-root user: node (uid=1000)'
-    - '#'
-    - "FROM \e[32m{{ state.org }}/dhi-node:22\e[0m"
-    - ''
-    - WORKDIR /app
-    - ''
-    - COPY package*.json ./
-    - RUN npm ci --omit=dev
-    - ''
-    - COPY src/ ./src/
-    - ''
-    - EXPOSE 3000
-    - CMD ["node", "src/index.js"]
-- id: cat-products-route
-  when:
-    command:
-    - cat
-    - src/routes/products.js
-  then:
-    output:
-    - const { Router } = require("express");
-    - const { pool } = require("../db/pool");
-    - const axios = require("axios");
-    - ''
-    - const upstream = process.env.CATALOG_UPSTREAM || "http://wiremock:8080";
-    - const router = Router();
-    - ''
-    - router.get("/", async (_req, res) => {
-    - '  const { rows } = await pool.query("SELECT * FROM products ORDER BY id");'
-    - '  res.json(rows);'
-    - '});'
-    - ''
-    - router.get("/:id", async (req, res) => {
-    - '  const { rows } = await pool.query("SELECT * FROM products WHERE id = $1", [req.params.id]);'
-    - '  if (!rows.length) return res.status(404).json({ error: "not found" });'
-    - '  const price = await axios.get(`${upstream}/price/${req.params.id}`).then(r => r.data).catch(() => null);'
-    - '  res.json({ ...rows[0], price });'
-    - '});'
-    - ''
-    - module.exports = router;
-- id: tree
-  when:
-    command:
-    - tree
-  then:
-    output:
-    - .
-    - ├── Dockerfile
-    - ├── README.md
-    - ├── package.json
-    - ├── db
-    - │   └── schema.sql
-    - ├── src
-    - │   ├── index.js
-    - │   ├── routes
-    - │   │   └── products.js
-    - │   ├── db
-    - │   │   └── pool.js
-    - │   └── events
-    - │       └── kafka.js
-    - └── frontend
-    - '    ├── package.json'
-    - '    └── src'
-    - '        └── App.jsx'
-    - ''
-    - 7 directories, 11 files
-- id: scout-quickview-community
-  when:
-    command:
-    - docker
-    - scout
-    - quickview
-    args:
-      0:
-        oneOf:
-        - node:22-alpine
-        - catalog-service:baseline
-  then:
-    output:
-    - text: '    ✓ Indexed 431 packages'
-      delay: scan
-    - '  Target             │  node:22-alpine  │    2C     8H    41M    93L'
-    - '    digest           │  sha256:7c3b5e9d14...              │'
-    - '  Base image  node:22-alpine (community, unattested)'
-    - ''
-    - '  What''s next:'
-    - '    View CVEs → docker scout cves node:22-alpine'
-- id: scout-cves-community
-  when:
-    command:
-    - docker
-    - scout
-    - cves
-    args:
-      0:
-        oneOf:
-        - node:22-alpine
-        - catalog-service:baseline
-  then:
-    output:
-    - text: "\e[32m    ✓ Indexed 431 packages\e[0m"
-      delay: scan
-    - text: "\e[32m    ✓ Vulnerability database updated 2 hours ago\e[0m"
-      delay: short
-    - ''
-    - "\e[1m    Vulnerabilities found\e[0m"
-    - ''
-    - "\e[1;31m  ✗ CRITICAL\e[0m  CVE-2024-4068"
-    - '             Package:  braces 3.0.2  (via nodemon)'
-    - '             Fix:      upgrade to 3.0.3'
-    - '             CVSS:     9.1  EPSS: 1.1%'
-    - ''
-    - "\e[1;31m  ✗ CRITICAL\e[0m  CVE-2024-37891"
-    - '             Package:  axios 1.7.2'
-    - '             Fix:      upgrade to 1.8.2'
-    - '             CVSS:     8.7  EPSS: 0.9%'
-    - ''
-    - "\e[1;33m  ! HIGH    \e[0m  CVE-2024-37890"
-    - '             Package:  ws 8.11.0  (via kafkajs)'
-    - '             Fix:      upgrade to 8.17.1'
-    - '             CVSS:     7.5  EPSS: 0.4%'
-    - ''
-    - "\e[1;33m  ! HIGH    \e[0m  CVE-2024-28849"
-    - '             Package:  follow-redirects 1.15.5  (via axios)'
-    - '             Fix:      upgrade to 1.15.6'
-    - '             CVSS:     6.5  EPSS: 0.3%'
-    - ''
-    - "\e[33m  ! MEDIUM  \e[0m  CVE-2024-29041"
-    - '             Package:  express 4.19.2'
-    - '             Fix:      upgrade to 4.21.0'
-    - '             CVSS:     5.3  EPSS: 0.2%'
-    - ''
-    - "\e[33m  ! MEDIUM  \e[0m  CVE-2024-21501"
-    - '             Package:  sanitize-html 2.11.0  (via pg)'
-    - '             Fix:      upgrade to 2.12.1'
-    - '             CVSS:     5.0  EPSS: 0.1%'
-    - ''
-    - '  ──────────────────────────────────────────────────────────────────'
-    - "  \e[1;31m  2 CRITICAL\e[0m   \e[1;33m 2 HIGH\e[0m   \e[33m 2 MEDIUM\e[0m   6 LOW"
-    - ''
-    - "\e[1;31m  ❌ Policy: Supply Chain Security — FAILED\e[0m"
-    - '     Reason: fixable critical CVEs present'
-    - '     Image must not be promoted to production.'
-- id: scout-quickview-dhi
-  when:
-    command:
-    - docker
-    - scout
-    - quickview
-    args:
-      0:
-        oneOf:
-        - catalog-service:dhi
-  then:
-    output:
-    - text: '    ✓ Indexed 78 packages'
-      delay: scan
-    - '  Target                          │  catalog-service:dhi  │    0C     0H     1M     4L'
-    - '    digest                        │  sha256:9e2b71c4a0f8  │'
-    - '  Base image  {{ state.org }}/dhi-node:22  (hardened, distroless)  │    0C     0H     0M     0L'
-- id: scout-cves-dhi
-  when:
-    command:
-    - docker
-    - scout
-    - cves
-    args:
-      0:
-        any: true
-  then:
-    output:
-    - text: "\e[32m    ✓ Indexed 78 packages\e[0m"
-      delay: scan
-    - text: "\e[32m    ✓ Vulnerability database updated 2 hours ago\e[0m"
-      delay: short
-    - ''
-    - "\e[1m    Vulnerabilities found\e[0m"
-    - ''
-    - "\e[32m  ✔ CRITICAL   0  \e[0m"
-    - "\e[32m  ✔ HIGH       0  \e[0m"
-    - "\e[33m  ~ MEDIUM     1  \e[0m  (VEX suppressed — not_affected)"
-    - "\e[2m  ~ LOW        4  \e[0m  (accepted)"
-    - ''
-    - '  ──────────────────────────────────────────────────────────────────'
-    - "\e[32m  ✔ No fixable critical CVEs.\e[0m"
-    - "\e[32m  ✔ No CISA KEV matches.\e[0m"
-    - "\e[32m  ✔ SBOM attestation present.\e[0m"
-    - "\e[32m  ✔ Provenance attestation present (SLSA Level 2).\e[0m"
-    - "\e[32m  ✔ Image signed (cosign verified).\e[0m"
-    - "\e[32m  ✔ Default non-root user: node (uid=1000).\e[0m"
-    - ''
-    - "\e[1;32m  ✔ Policy: Supply Chain Security — PASSED\e[0m"
-- id: scout-sbom-dhi
-  when:
-    command:
-    - docker
-    - scout
-    - sbom
-    args:
-      0:
-        any: true
-  then:
-    output:
-    - text: '    ✓ Indexed 78 packages'
-      delay: scan
-    - ''
-    - '  SBOM (CycloneDX 1.5) — {{ state.org }}/dhi-node:22'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  PACKAGE            VERSION     TYPE   LICENSE'
-    - '  nodejs             22.5.1      apk    MIT'
-    - '  npm                10.8.2      apk    Artistic-2.0'
-    - '  openssl            3.3.1-r3    apk    Apache-2.0'
-    - '  ca-certificates    20240705    apk    MPL-2.0'
-    - '  libc               1.2.5-r0    apk    MIT'
-    - '  zlib               1.3.1-r0    apk    Zlib'
-    - '  … 72 packages total'
-- id: scout-attestation-inspect
-  when:
-    command:
-    - docker
-    - scout
-    - attestation
-    - inspect
-    args:
-      0:
-        any: true
-  then:
-    output:
-    - text: '    ✓ Fetching attestations for {{ args.0 }}'
-      delay: scan
-    - '  TYPE                                          SIGNED   BY'
-    - '  https://spdx.dev/Document                     yes      Docker, Inc.'
-    - '  https://openvex.dev/ns/v0.2.0                 yes      Docker, Inc.'
-    - '  https://slsa.dev/provenance/v0.2  (L2)        yes      Docker, Inc.'
-    - '  docker.com/fips/v1                            yes      Docker, Inc. (FIPS 140-2)'
-    - '  docker.com/stig/v1                            yes      Docker, Inc. (STIG v1R4)'
-- id: scout-attest-list-dhi
-  when:
-    command:
-    - docker
-    - scout
-    - attest
-    - list
-    args:
-      0:
-        any: true
-  then:
-    output:
-    - text: '    ✓ Fetching attestations for {{ args.0 }}'
-      delay: scan
-    - '  TYPE                                          SIGNED   BY'
-    - '  https://spdx.dev/Document                     yes      Docker, Inc.'
-    - '  https://openvex.dev/ns/v0.2.0                 yes      Docker, Inc.'
-    - '  https://slsa.dev/provenance/v0.2  (L2)        yes      Docker, Inc.'
-    - '  docker.com/fips/v1                            yes      Docker, Inc. (FIPS 140-2)'
-    - '  docker.com/stig/v1                            yes      Docker, Inc. (STIG v1R4)'
-- id: scout-vex-inspect
-  when:
-    command:
-    - docker
-    - scout
-    - vex
-    - inspect
-    args:
-      0:
-        any: true
-  then:
-    output:
-    - '  VEX Statement'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '    CVE:           CVE-2024-37891 (httpx — Medium)'
-    - '    Status:        not_affected'
-    - '    Justification: vulnerable_code_not_in_execute_path'
-    - '    Impact:        The affected code path is unreachable in this'
-    - '                   distroless image configuration.'
-    - '    Timestamp:     2025-06-12T00:00:00Z'
-    - ''
-    - '  ✔ VEX exception validated. CVE suppressed from policy evaluation.'
-- id: scout-attest-get-vex
-  when:
-    command:
-    - docker
-    - scout
-    - attest
-    - get
-    args:
-      --predicate-type:
-        oneOf:
-        - https://openvex.dev/ns/v0.2.0
-  then:
-    output:
-    - '{'
-    - '  "vulnerability": { "name": "CVE-2024-37891" },'
-    - '  "products": [ "pkg:oci/node@sha256:a3f9e1d8c2..." ],'
-    - '  "status": "not_affected",'
-    - '  "justification": "vulnerable_code_not_in_execute_path"'
-    - '}'
-- id: scout-compare
-  when:
-    command:
-    - docker
-    - scout
-    - compare
-  then:
-    output:
-    - text: '    ✓ Indexed both images'
-      delay: scan
-    - '  Comparing catalog-service:dhi  to  node:22-alpine'
-    - ''
-    - '  Critical      0   ←   2   (-2)'
-    - '  High          0   ←   2   (-2)'
-    - '  Medium        1   ←   2   (-1)'
-    - '  Low           4   ←  93   (-89)'
-    - '  Packages     78   ← 431   (-353)'
-- id: docker-build-dhi
-  when:
-    command:
-    - docker
-    - build
-    args:
-      -t:
-        oneOf:
-        - catalog-service:dhi
-  then:
-    state:
-      dhi.imageBuilt: true
-    files:
-    - create: Dockerfile
-      content: 'FROM {{ state.org }}/dhi-node:22
+  - id: docker-scout-quickview
+    when:
+      command: [docker, scout, quickview]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "    i  New version 1.14.0 available (installed version is 1.11.0) at https://github.com/docker/scout-cli"
+        - "        Image │  product-catalog:latest"
+        - "    Analyzed │  77 packages"
+        - "  Base image │  node:18-alpine"
+        - "  Refreshed │  1 minute ago"
+        - ""
+        - "    ✗ Critical  3"
+        - "    ✗ High     11"
+        - "    ~ Medium   29"
+        - "    ✓ Low       4"
+        - ""
+        - "  Packages at risk │  43 / 77"
+        - ""
+        - "What's next?"
+        - "    View base image update recommendations → docker scout recommendations product-catalog:latest"
+        - "    Include policy results in your quickview → docker scout quickview --org {{ state.configured_org }} product-catalog:latest"
 
+  # docker scout cves — specific image args BEFORE the any catch-all (first-match-wins)
+  # Image name moved from command array to args (spec §6.1: command is prefix only)
+  - id: docker-scout-cves-catalog
+    when:
+      command: [docker, scout, cves]
+      args:
+        0: "product-catalog:latest"
+    then:
+      output:
+        - "    ✓ SBOM of image already cached, 77 packages indexed"
+        - "    ✓ Pulled"
+        - "    ✗ Found 3 critical, 11 high, 29 medium, 4 low vulnerabilities"
+        - ""
+        - "   ╭──────────────────────────────────────────────────────────────────────────────╮"
+        - "   │                          Vulnerability summary                               │"
+        - "   ├───────────────────┬──────────────────────────────────────────────────────────┤"
+        - "   │ Severity          │ 3 CRITICAL │ 11 HIGH │ 29 MEDIUM │ 4 LOW                 │"
+        - "   │ Fixable           │ 3 CRITICAL │  9 HIGH │ 21 MEDIUM │ 2 LOW                 │"
+        - "   │ Base image        │ node:18-alpine                                           │"
+        - "   ╰───────────────────┴──────────────────────────────────────────────────────────╯"
+        - ""
+        - "   CRITICAL Vulnerabilities"
+        - "   ─────────────────────────────────────────────────────────────────────────────"
+        - "   Package       CVE ID           Severity  Fixed In  CVSS  Description"
+        - "   ──────────────────────────────────────────────────────────────────────────────"
+        - "   openssl       CVE-2024-0727    CRITICAL  3.2.1     9.1   PKCS12 null ptr dereference"
+        - "   libssl3       CVE-2023-5363    CRITICAL  3.1.4     9.1   AES-SIV cipher misuse"
+        - "   busybox       CVE-2023-42363   CRITICAL  1.36.1    9.8   awk use-after-free"
+        - ""
+        - "   HIGH Vulnerabilities"
+        - "   ─────────────────────────────────────────────────────────────────────────────"
+        - "   Package       CVE ID           Severity  Fixed In  CVSS  Description"
+        - "   ──────────────────────────────────────────────────────────────────────────────"
+        - "   curl          CVE-2023-38545   HIGH      8.3.0     8.1   Heap overflow in SOCKS5"
+        - "   libcurl       CVE-2023-38546   HIGH      8.3.0     4.2   Cookie injection in SOCKS5"
+        - "   nghttp2       CVE-2023-44487   HIGH      1.57.0    7.5   HTTP/2 Rapid Reset"
+        - "   npm           CVE-2024-21538   HIGH      10.8.3    7.4   cross-spawn ReDoS"
+        - "   node          CVE-2024-22019   HIGH      20.11.1   7.5   HTTP request smuggling"
+        - "   libc-utils    CVE-2023-5156    HIGH      0.7.2-r4  7.5   free() invalid pointer"
+        - "   musl          CVE-2024-3067    HIGH      1.2.5-r2  7.3   Stack overflow in printf"
+        - "   zlib          CVE-2023-45853   HIGH      1.3.1     9.8   MiniZip integer overflow"
+        - "   libexpat      CVE-2023-52425   HIGH      2.6.2     7.5   Billion laughs attack"
+        - "   libxml2       CVE-2024-25062   HIGH      2.12.5    7.5   Use-after-free in reader"
+        - "   tar           CVE-2023-39804   HIGH      1.35      7.1   Out-of-bounds read"
+        - ""
+        - "   ... and 29 MEDIUM, 4 LOW vulnerabilities"
+        - ""
+        - "What's next?"
+        - "    Check base image recommendations → docker scout recommendations product-catalog:latest"
+        - "    Explore remediation → https://scout.docker.com/reports/..."
 
-        WORKDIR /app
+  - id: docker-scout-cves-dhi-node
+    when:
+      command: [docker, scout, cves]
+      args:
+        0: "dhi.io/node:24-alpine"
+    then:
+      output:
+        - "    ✓ SBOM of image already cached, 61 packages indexed"
+        - "    ✓ Pulled"
+        - "    ✓ No critical vulnerabilities found"
+        - "    ✓ No high vulnerabilities found"
+        - ""
+        - "   ╭──────────────────────────────────────────────────────────────────────────────╮"
+        - "   │                          Vulnerability summary                               │"
+        - "   ├───────────────────┬──────────────────────────────────────────────────────────┤"
+        - "   │ Severity          │ 0 CRITICAL │ 0 HIGH │ 2 MEDIUM │ 1 LOW                  │"
+        - "   │ Fixable           │ 0 CRITICAL │ 0 HIGH │ 0 MEDIUM │ 0 LOW                  │"
+        - "   │ Base image        │ dhi.io/node:24-alpine (FIPS validated, STIG hardened)   │"
+        - "   ╰───────────────────┴──────────────────────────────────────────────────────────╯"
+        - ""
+        - "   MEDIUM Vulnerabilities (non-fixable, suppressed by VEX)"
+        - "   ──────────────────────────────────────────────────────────────────────────────"
+        - "   Package   CVE ID           Severity  Status        Description"
+        - "   ──────────────────────────────────────────────────────────────────────────────"
+        - "   libssl3   CVE-2024-5535    MEDIUM    not_affected  VEX: not reachable in this build"
+        - "   openssl   CVE-2024-4603    MEDIUM    not_affected  VEX: DHI team reviewed, mitigated"
+        - ""
+        - "    ✓ 0 fixable CVEs — no action required"
+        - "    ✓ FIPS 140-2 validated cryptographic modules"
+        - "    ✓ STIG-hardened base (CIS Benchmark Level 2)"
+        - "    ✓ SBOM + provenance attestations present"
 
+  # Catch-all for any other image — must come AFTER specific image scenarios
+  - id: docker-scout-cves-image-any
+    when:
+      command: [docker, scout, cves]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "    ✓ Analyzing {{ args.0 }}..."
+        - "    ✓ SBOM indexed, 77 packages found"
+        - "    ✗ Found 3 critical, 11 high vulnerabilities"
+        - ""
+        - "    Run with a specific image tag for detailed results."
 
-        COPY package*.json ./
+  # docker scout policy — specific images BEFORE catch-all (first-match-wins)
+  - id: docker-scout-policy-catalog-fail
+    when:
+      command: [docker, scout, policy]
+      args:
+        0: "product-catalog:latest"
+    then:
+      output:
+        - "    ✓  Image analyzed: product-catalog:latest"
+        - "    ✓  Organization: {{ state.configured_org }}"
+        - ""
+        - "    Policy status  FAIL  ──────────────────────────────────────────────────"
+        - ""
+        - "                   ✗  No critical or high-profile CVEs     not satisfied"
+        - "                      3 critical, 11 high CVEs detected"
+        - ""
+        - "                   ✗  Supply chain attestations            not satisfied"
+        - "                      SBOM attestation: missing"
+        - "                      Provenance attestation: missing"
+        - ""
+        - "                   ✗  No fixable vulnerabilities           not satisfied"
+        - "                      35 fixable CVEs (upgrade base image to fix 31)"
+        - ""
+        - "                   ✗  Approved base images                 not satisfied"
+        - "                      node:18-alpine is not in approved image list"
+        - "                      Approved: dhi.io/node:*, dhi.io/nginx:*, dhi.io/python:*"
+        - ""
+        - "                   ✗  Default non-root user                not satisfied"
+        - "                      Dockerfile does not set USER directive"
+        - ""
+        - "    ─────────────────────────────────────────────────────────────────────"
+        - "    Result: 0 / 5 policies satisfied"
+        - ""
+        - "    Recommended fix: switch base image to dhi.io/node:24-alpine"
+        - "    → docker scout recommendations product-catalog:latest"
 
-        RUN npm ci --omit=dev
+  - id: docker-scout-policy-dhi-pass
+    when:
+      command: [docker, scout, policy]
+      args:
+        0: "product-catalog:dhi"
+    then:
+      output:
+        - "    ✓  Image analyzed: product-catalog:dhi"
+        - "    ✓  Organization: {{ state.configured_org }}"
+        - ""
+        - "    Policy status  PASS  ──────────────────────────────────────────────────"
+        - ""
+        - "                   ✓  No critical or high-profile CVEs     satisfied"
+        - "                      0 critical, 0 high CVEs"
+        - ""
+        - "                   ✓  Supply chain attestations            satisfied"
+        - "                      SBOM: present (CycloneDX)"
+        - "                      Provenance: present (SLSA v0.2)"
+        - ""
+        - "                   ✓  No fixable vulnerabilities           satisfied"
+        - "                      0 fixable CVEs"
+        - ""
+        - "                   ✓  Approved base images                 satisfied"
+        - "                      dhi.io/node:24-alpine is in approved image list"
+        - ""
+        - "                   ✓  Default non-root user                satisfied"
+        - "                      USER node (uid=1000)"
+        - ""
+        - "    ─────────────────────────────────────────────────────────────────────"
+        - "    Result: 5 / 5 policies satisfied  🎉"
+        - ""
+        - "    This image is ready for production deployment."
 
+  # Catch-all for any other image — must come AFTER specific image scenarios
+  - id: docker-scout-policy-any
+    when:
+      command: [docker, scout, policy]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "    ✓  Image analyzed: {{ args.0 }}"
+        - "    Policy status  FAIL"
+        - "    ✗  No critical or high-profile CVEs  not satisfied"
+        - "    ✗  Supply chain attestations          not satisfied"
+        - "    ✗  Approved base images               not satisfied"
+        - ""
+        - "    Result: 0 / 5 policies satisfied"
 
-        COPY src/ ./src/
+  - id: docker-scout-sbom
+    when:
+      command: [docker, scout, sbom]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "{"
+        - "  \"bomFormat\": \"CycloneDX\","
+        - "  \"specVersion\": \"1.4\","
+        - "  \"serialNumber\": \"urn:uuid:f3a12b8c-9e41-4d7a-b3c1-0a8f2e6d4c9b\","
+        - "  \"version\": 1,"
+        - "  \"metadata\": {"
+        - "    \"timestamp\": \"2026-08-10T09:00:00Z\","
+        - "    \"tools\": [{\"name\": \"docker-scout\", \"version\": \"1.14.0\"}],"
+        - "    \"component\": {"
+        - "      \"type\": \"container\","
+        - "      \"name\": \"product-catalog\","
+        - "      \"version\": \"latest\""
+        - "    }"
+        - "  },"
+        - "  \"components\": ["
+        - "    {\"type\":\"library\",\"name\":\"express\",\"version\":\"4.18.2\",\"purl\":\"pkg:npm/express@4.18.2\"},"
+        - "    {\"type\":\"library\",\"name\":\"pg\",\"version\":\"8.11.3\",\"purl\":\"pkg:npm/pg@8.11.3\"},"
+        - "    {\"type\":\"library\",\"name\":\"openssl\",\"version\":\"3.1.3\",\"purl\":\"pkg:apk/alpine/openssl@3.1.3-r0\"},"
+        - "    {\"type\":\"library\",\"name\":\"curl\",\"version\":\"8.2.1\",\"purl\":\"pkg:apk/alpine/curl@8.2.1-r0\"},"
+        - "    ... (77 components total)"
+        - "  ]"
+        - "}"
 
+  - id: docker-scout-attestation
+    when:
+      command: [docker, scout, attestation, list]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "  Image                  │ {{ args.0 }}"
+        - "  Digest                 │ sha256:3f8c9a2b14e7d6f4c8b2e1a9d5c3b7f2e4a8d6c1b3f..."
+        - ""
+        - "  ATTESTATIONS"
+        - "  ──────────────────────────────────────────────────────────────────────────────"
+        - "  Type                   │ Status      │ Predicates"
+        - "  ──────────────────────────────────────────────────────────────────────────────"
+        - "  SBOM (CycloneDX)       │ ✓ present   │ 77 components, generated by docker-scout"
+        - "  SLSA Provenance v0.2   │ ✓ present   │ builder: GitHub Actions, source: github.com/dockersamples/product-catalog"
+        - "  VEX                    │ ✓ present   │ 1 statement (CVE-2023-44487 → not_affected)"
+        - ""
+        - "  FIPS Compliance        │ ✓ validated │ FIPS 140-2 Level 1 (dhi.io/node:24-alpine)"
+        - "  STIG Alignment         │ ✓ verified  │ DISA STIG Node.js v2R2 — 47/47 controls pass"
+        - ""
+        - "  Signature              │ cosign verify --certificate-identity-regexp 'github.com/dockersamples'"
+        - "                         │ --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'"
+        - "                         │ product-catalog:latest"
 
-        EXPOSE 3000
+  - id: docker-scout-recommendations
+    when:
+      command: [docker, scout, recommendations]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "    i  Recommendations for {{ args.0 }}"
+        - ""
+        - "    Base image   node:18-alpine"
+        - "               ↳ 3 critical, 11 high CVEs"
+        - ""
+        - "    Recommended alternatives"
+        - "    ─────────────────────────────────────────────────────────────────────────────"
+        - "      dhi.io/node:24-alpine   │ 0 critical │ 0 high │ FIPS + STIG  ← RECOMMENDED"
+        - "      node:20-alpine          │ 1 critical │ 4 high │ not hardened"
+        - "      node:22-alpine          │ 0 critical │ 2 high │ not hardened"
+        - ""
+        - "    Change your Dockerfile:"
+        - "      - FROM node:18-alpine"
+        - "      + FROM dhi.io/node:24-alpine"
+        - ""
+        - "    This will resolve 3 critical and 9 high CVEs (31 of 47 total)."
 
-        CMD ["node", "src/index.js"]
+  # ─────────────────────────────────────────
+  # SECTION 4 — Sandboxes
+  # ─────────────────────────────────────────
 
-        '
-    output:
-    - text: '[+] Building 0.3s FROM {{ state.org }}/dhi-node:22 (distroless)'
-      delay: pull
-    - text: '[+] Building 7.4s (7/12) RUN npm ci --omit=dev'
-      delay: build
-    - text: '[+] Building 31.2s (12/12) exporting to image'
-      delay: build
-    - '     => exporting sbom attestation'
-    - '     => exporting provenance attestation mode=max'
-    - '     => => naming to docker.io/library/catalog-service:dhi'
-- id: docker-build-generic
-  when:
-    command:
-    - docker
-    - build
-    args:
-      -t:
-        any: true
-  then:
-    output:
-    - text: '[+] Building 58.9s (9/9) FINISHED'
-      delay: build
-    - '     => => naming to {{ args.t }}'
-- id: docker-images-both
-  when:
-    command:
-    - docker
-    - images
-    args:
-      0:
-        oneOf:
-        - catalog-service
-  then:
-    output:
-    - REPOSITORY        TAG        IMAGE ID       CREATED         SIZE
-    - catalog-service   baseline   3af1c9e0b2d4   5 minutes ago   1.1GB
-    - catalog-service   dhi        9e2b71c4a0f8   1 minute ago    248MB
-- id: docker-images-any
-  when:
-    command:
-    - docker
-    - images
-  then:
-    output:
-    - REPOSITORY        TAG        IMAGE ID       CREATED         SIZE
-    - catalog-service   baseline   3af1c9e0b2d4   5 minutes ago   1.1GB
-- id: scout-policy-community-fail
-  when:
-    command:
-    - docker
-    - scout
-    - policy
-    args:
-      0:
-        oneOf:
-        - node:22-alpine
-        - catalog-service:baseline
-  then:
-    output:
-    - text: "\e[32m    ✓ Evaluating 4 policies\e[0m"
-      delay: scan
-    - ''
-    - "\e[1m  Policy evaluation for {{ args.0 }}\e[0m"
-    - '  ──────────────────────────────────────────────────────────────'
-    - "\e[1;31m  ✗ no-critical-cves   \e[0m FAILED   2 fixable CRITICALs found"
-    - "\e[1;31m  ✗ require-sbom       \e[0m FAILED   no SBOM attestation present"
-    - "\e[1;31m  ✗ require-provenance \e[0m FAILED   no provenance attestation"
-    - "\e[1;31m  ✗ image-signed       \e[0m FAILED   no cosign signature found"
-    - '  ──────────────────────────────────────────────────────────────'
-    - "\e[1;31m  Policy status: FAILED (0 of 4 policies met)\e[0m"
-    - '  Exit code: 1'
-    exit: 1
-- id: scout-policy-dhi-pass
-  when:
-    command:
-    - docker
-    - scout
-    - policy
-    args:
-      0:
-        any: true
-  then:
-    state:
-      ci.policyPassed: true
-    output:
-    - text: "\e[32m    ✓ Evaluating 4 policies\e[0m"
-      delay: scan
-    - ''
-    - "\e[1m  Policy evaluation for {{ args.0 }}\e[0m"
-    - '  ──────────────────────────────────────────────────────────────'
-    - "\e[1;32m  ✔ no-critical-cves   \e[0m PASSED"
-    - "\e[1;32m  ✔ require-sbom       \e[0m PASSED   sbom attestation present"
-    - "\e[1;32m  ✔ require-provenance \e[0m PASSED   slsa-provenance mode=max"
-    - "\e[1;32m  ✔ image-signed       \e[0m PASSED   cosign signature verified"
-    - '  ──────────────────────────────────────────────────────────────'
-    - "\e[1;32m  Policy status: PASSED (4 of 4 policies met)\e[0m"
-    - '  Exit code: 0'
-- id: git-add
-  when:
-    command:
-    - git
-    - add
-  then:
-    output:
-    - ''
-- id: git-commit
-  when:
-    command:
-    - git
-    - commit
-  then:
-    output:
-    - '[main 7f3a2c1] Switch to DHI base image + secure build pipeline'
-    - ' 2 files changed, 8 insertions(+), 2 deletions(-)'
-- id: git-push-fail
-  when:
-    command:
-    - git
-    - push
-    state:
-      dhi.imageBuilt: false
-  then:
-    ci:
-      workflow: ci-fail
-    output:
-    - text: 'Enumerating objects: 5, done.'
-      delay: short
-    - To github.com/{{ state.org }}/catalog-service.git
-    - '   3af1c9e..9e2b71c  main -> main'
-    - ''
-    - 'remote: Triggered GitHub Actions workflow: CI'
-    - 'remote: See the CI Pipeline tab for job results.'
-    exit: 1
-- id: git-push-pass
-  when:
-    command:
-    - git
-    - push
-    state:
-      dhi.imageBuilt: true
-  then:
-    ci:
-      workflow: ci-pass
-    output:
-    - text: 'Enumerating objects: 5, done.'
-      delay: short
-    - To github.com/{{ state.org }}/catalog-service.git
-    - '   3af1c9e..a9d0e42  main -> main'
-    - ''
-    - 'remote: Triggered GitHub Actions workflow: CI'
-    - 'remote: See the CI Pipeline tab for job results.'
-- id: gh-run-view-fail
-  when:
-    command:
-    - gh
-    - run
-    - view
-    state:
-      dhi.imageBuilt: false
-  then:
-    output:
-    - 'CI  ·  run #1  ·  ✗ failure  ·  21s'
-    - '  branch main   commit 3af1c9e   trigger: push'
-    - '  workflow: .github/workflows/ci.yml'
-    - ''
-    - '  build  (ubuntu-latest)                                          ✔ 12s'
-    - '  ─────────────────────────────────────────────────────────────────────'
-    - '  ✔ actions/checkout@v4                                            2s'
-    - '  ✔ docker build -t catalog-service .                             10s'
-    - ''
-    - '  policy-gate  (ubuntu-latest)                                    ✗ 9s'
-    - '  ─────────────────────────────────────────────────────────────────────'
-    - '  ✗ docker/scout-action@v1'
-    - '      ✗ no-critical-cves     FAILED  2 fixable CRITICALs (braces, axios)'
-    - '      ✗ require-sbom         FAILED  no SBOM attestation'
-    - '      ✗ require-provenance   FAILED  no provenance attestation'
-    - '      ✗ image-signed         FAILED  no cosign signature'
-    - '      Policy status: FAILED (0 of 4 policies met)'
-    - ''
-    - '  push    ⊘ skipped (policy-gate failed)'
-    - '  deploy  ⊘ skipped'
-- id: gh-run-view-pass
-  when:
-    command:
-    - gh
-    - run
-    - view
-    state:
-      dhi.imageBuilt: true
-  then:
-    output:
-    - 'CI  ·  run #2  ·  ✔ success  ·  24s'
-    - '  branch main   commit a9d0e42   trigger: push'
-    - '  workflow: .github/workflows/ci.yml'
-    - ''
-    - '  build  (ubuntu-latest)                                          ✔ 10s'
-    - '  ─────────────────────────────────────────────────────────────────────'
-    - '  ✔ actions/checkout@v4                                            2s'
-    - '  ✔ docker build -t catalog-service .  (sbom + provenance)        8s'
-    - ''
-    - '  policy-gate  (ubuntu-latest)                                    ✔ 9s'
-    - '  ─────────────────────────────────────────────────────────────────────'
-    - '  ✔ docker/scout-action@v1'
-    - '      ✔ no-critical-cves     PASSED'
-    - '      ✔ require-sbom         PASSED   sbom attestation present'
-    - '      ✔ require-provenance   PASSED   slsa-provenance mode=max'
-    - '      ✔ image-signed         PASSED   cosign signature verified'
-    - '      Policy status: PASSED (4 of 4 policies met)'
-    - ''
-    - '  push  (ubuntu-latest)                                           ✔ 3s'
-    - '  ─────────────────────────────────────────────────────────────────────'
-    - '  ✔ docker push {{ state.org }}/catalog-service:a9d0e42'
-    - '    attestations bound to digest sha256:9e2b71c4a0f8'
-    - ''
-    - '  deploy  (ubuntu-latest)                                         ✔ 2s'
-    - '  ─────────────────────────────────────────────────────────────────────'
-    - '  ✔ catalog-service:a9d0e42 live in production'
-- id: sbx-policy-show-local
-  when:
-    command:
-    - sbx
-    - policy
-    - show
-    args:
-      --context:
-        oneOf:
-        - local
-  then:
-    output:
-    - '  Local Sandbox Policies'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  NETWORK'
-    - '    allow   hub.docker.com'
-    - '    allow   api.anthropic.com'
-    - '    allow   dhi.io'
-    - '    deny    * (default)'
-    - ''
-    - '  FILESYSTEM'
-    - '    rw      /workspace'
-    - '    rw      /tmp'
-    - '    deny    /etc, /proc, /sys'
-    - ''
-    - '  MCP'
-    - '    allow   dhi MCP server  (https://dhi.io/mcp)'
-    - '    allow   filesystem MCP'
-    - '    deny    * (default)'
-- id: sbx-daemon-start
-  when:
-    command:
-    - sbx
-    - daemon
-    - start
-  then:
-    output:
-    - text: Starting sbx daemon...
-      delay: short
-    - '  microVM booted: own daemon, own network, host mounted read-only.'
-    - '  sbx daemon running (background).'
-- id: sbx-run
-  when:
-    command:
-    - sbx
-    - run
-    args:
-      --agent:
-        any: true
-  then:
-    state:
-      sandbox.started: true
-    output:
-    - '  ✔  Sandbox started'
-    - '     Agent:     {{ args.agent }} (claude-sonnet-4-6)'
-    - '     MicroVM:   sandbox-b9f3e1a2'
-    - '     Workspace: /workspace (rw)'
-    - '     Network:   policy-restricted'
-    - '     MCP:       dhi MCP server registered'
-    - ''
-    - '  Agent is ready. Workspace mounted.'
-- id: sbx-ps
-  when:
-    command:
-    - sbx
-    - ps
-  then:
-    output:
-    - '  SANDBOX ID         AGENT         STATUS    UPTIME   WORKSPACE'
-    - '  sandbox-b9f3e1a2   claude-code   running   00:04:31  /workspace'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  1 sandbox running.'
-- id: sbx-logs
-  when:
-    command:
-    - sbx
-    - logs
-    args:
-      0:
-        any: true
-  then:
-    output:
-    - '  [00:00:01] Sandbox microVM started'
-    - '  [00:00:02] Network policy applied (4 rules)'
-    - '  [00:00:02] Filesystem policy applied'
-    - '  [00:00:03] MCP gateway connected → dhi.io/mcp'
-    - '  [00:00:04] Claude Code agent started'
-    - '  [00:04:22] Tool: read   /workspace/src/routes/products.js'
-    - '  [00:04:23] Tool: read   /workspace/src/db/pool.js'
-    - '  [00:04:25] Tool: write  /workspace/src/routes/products.js (patch applied)'
-    - '  [00:04:26] Sandbox idle, awaiting next prompt'
-- id: claude-fix-bug
-  when:
-    agent: true
-    promptContains:
-    - fix
-    - bug
-    - item
-    - missing
-    - product
-    state:
-      sandbox.mcpAdded: false
-  then:
-    output:
-    - ''
-    - text: "\e[36m●\e[0m I'll look at the product route handler to find the bug."
-      delay: short
-    - ''
-    - text: '  ● Read(src/routes/products.js)'
-      delay: short
-    - '    ⎿  Read 32 lines from src/routes/products.js'
-    - ''
-    - text: '  ● Read(src/db/pool.js)'
-      delay: short
-    - '    ⎿  Read 8 lines from src/db/pool.js'
-    - ''
-    - text: "\e[36m●\e[0m Found it. In router.get('/:id'), req.params.id is never"
-      delay: short
-    - '  extracted before being passed to pool.query(). The product'
-    - '  item code is missing — the query always runs without an id.'
-    - ''
-    - text: '  ● Edit(src/routes/products.js)'
-      delay: short
-    - '    ⎿  Edited src/routes/products.js'
-    - ''
-    - '     13 -     const { rows } = await pool.query('
-    - '     13 +     const id = req.params.id;'
-    - '     14 +     const { rows } = await pool.query('
-    - '     15           "SELECT * FROM products WHERE id = $1",'
-    - '     16 -         [req.params.id]'
-    - '     16 +         [id]'
-    - ''
-    - "\e[36m●\e[0m The product item code is now correctly extracted from"
-    - '  req.params.id and passed to the database query.'
-    - ''
-    - "\e[2m· Done  (3 tool uses · 12.4s · esc to interrupt)\e[0m"
-    - ''
-- id: agent-exit
-  when:
-    agent: true
-    promptContains:
-    - exit
-    - quit
-    - /exit
-    - /quit
-  then:
-    output:
-    - ''
-    - "\e[2m· Ending session…\e[0m"
-    - ''
-- id: agent-sbx-mcp-list
-  when:
-    agent: true
-    promptContains:
-    - sbx
-    - mcp
-    - list
-    - ls
-    state:
-      sandbox.mcpAdded: true
-  then:
-    output:
-    - ''
-    - "\e[36m●\e[0m Here are the MCP servers registered in this sandbox:"
-    - ''
-    - '  NAME        TYPE     URL'
-    - '  dhi         remote   https://dhi.io/mcp'
-    - '  filesystem  local    stdio://filesystem-mcp'
-    - '  ─────────────────────────────────────────'
-    - '  2 MCP servers configured.'
-    - ''
-- id: agent-sbx-mcp-list-empty
-  when:
-    agent: true
-    promptContains:
-    - sbx
-    - mcp
-    - list
-    - ls
-  then:
-    output:
-    - ''
-    - "\e[36m●\e[0m No MCP servers are registered yet."
-    - ''
-    - '  Add one with:  sbx mcp add <name> --url <url>'
-    - ''
-- id: agent-claude-mcp-add
-  when:
-    agent: true
-    promptContains:
-    - mcp
-    - add
-    - dhi
-    - dhi.io
-  then:
-    state:
-      sandbox.mcpAdded: true
-    output:
-    - ''
-    - "\e[36m●\e[0m Registering the DHI MCP server…"
-    - ''
-    - "  \e[32m✔\e[0m  MCP server registered: dhi"
-    - '     URL:       https://dhi.io/mcp'
-    - '     Transport: Streamable HTTP'
-    - '     Tools:'
-    - '       dhi_list_repositories     dhi_get_image_details'
-    - '       dhi_get_image_cves        dhi_get_image_packages'
-    - '       dhi_get_image_attestations dhi_list_mirrors'
-    - '       dhi_create_mirror         dhi_remove_mirror'
-    - ''
-    - "\e[2m· Done  (0.8s · ↑ 0 tokens)\e[0m"
-    - ''
-- id: agent-sbx-policy-show
-  when:
-    agent: true
-    promptContains:
-    - sbx
-    - policy
-    - show
-  then:
-    output:
-    - ''
-    - "\e[36m●\e[0m Current sandbox policies for org \e[38;5;179m{{ state.org }}\e[0m:"
-    - ''
-    - '  NETWORK'
-    - "    \e[32mallow\e[0m   hub.docker.com"
-    - "    \e[32mallow\e[0m   api.anthropic.com"
-    - "    \e[32mallow\e[0m   dhi.io/mcp"
-    - "    \e[31mdeny \e[0m   * (default)"
-    - ''
-    - '  FILESYSTEM'
-    - "    \e[32mrw   \e[0m   /workspace, /tmp"
-    - "    \e[31mdeny \e[0m   exec outside /workspace"
-    - ''
-    - '  MCP'
-    - "    \e[32mallow\e[0m   dhi         https://dhi.io/mcp  [pre-registered]"
-    - "    \e[32mallow\e[0m   filesystem  stdio://filesystem   [pre-registered]"
-    - "    \e[31mdeny \e[0m   * (default)"
-    - ''
-    - '  IMAGE POLICY'
-    - "    \e[32mrequire\e[0m base image matching \e[38;5;179m{{ state.org }}\e[0m/dhi-*"
-    - ''
-    - "\e[2m· Done  (1.1s · ↑ 0 tokens)\e[0m"
-    - ''
-- id: agent-sbx-policy-diff
-  when:
-    agent: true
-    promptContains:
-    - sbx
-    - policy
-    - diff
-  then:
-    output:
-    - ''
-    - "\e[36m●\e[0m Comparing local vs \e[38;5;179m{{ state.org }}\e[0m org policies:"
-    - ''
-    - "  \e[2mDIMENSION      LOCAL                  {{ state.org }} ORG\e[0m"
-    - '  Network        hub.docker.com         + dhi.io/mcp allowed'
-    - '  Filesystem     /workspace rw           + deny exec outside /workspace'
-    - '  MCP            (none pre-registered)   + dhi + filesystem pre-registered'
-    - '  Image policy   (none)                  + require {{ state.org }}/dhi-*'
-    - ''
-    - '  4 differences. Org policy is more restrictive than local.'
-    - ''
-    - "\e[2m· Done  (1.3s · ↑ 0 tokens)\e[0m"
-    - ''
-- id: agent-docker-login-org
-  when:
-    agent: true
-    promptContains:
-    - docker
-    - login
-    - org
-  then:
-    state:
-      orgCtx.active: true
-    output:
-    - ''
-    - "\e[36m●\e[0m Switching to org context \e[38;5;179m{{ state.org }}\e[0m…"
-    - ''
-    - "  \e[32m✔\e[0m  Switched to org context: \e[38;5;179m{{ state.org }}\e[0m"
-    - '     Org policies and DHI image namespace are now active.'
-    - '     Sandbox agents started in this context inherit the org policy set.'
-    - ''
-    - "\e[2m· Done  (0.9s · ↑ 0 tokens)\e[0m"
-    - ''
-- id: sbx-policy-diff
-  when:
-    command:
-    - sbx
-    - policy
-    - diff
-    args:
-      --local:
-        any: true
-      --org:
-        any: true
-  then:
-    output:
-    - '  POLICY DIFF: local  vs  {{ args.org }} org'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  DIMENSION        LOCAL                    {{ args.org }} ORG'
-    - '  Network          hub.docker.com allowed   + dhi.io/mcp explicitly allowed'
-    - '                   api.anthropic.com         + stricter default-deny'
-    - '  Filesystem       /workspace rw            + deny exec outside /workspace'
-    - '  MCP              (none pre-registered)    + dhi MCP server pre-registered'
-    - '                                            + filesystem MCP pre-registered'
-    - '  Image policy     (none)                   + require base = {{ state.org }}/dhi-*'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  4 differences. Org policy is more restrictive than local.'
-- id: sbx-policy-show-org
-  when:
-    command:
-    - sbx
-    - policy
-    - show
-    args:
-      --org:
-        any: true
-  then:
-    output:
-    - '  Org Sandbox Policies — {{ args.org }}'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  NETWORK'
-    - '    allow   hub.docker.com'
-    - '    allow   api.anthropic.com'
-    - '    allow   dhi.io/mcp         (DHI catalog MCP)'
-    - '    deny    * (default)'
-    - ''
-    - '  FILESYSTEM'
-    - '    rw      /workspace, /tmp'
-    - '    deny    exec outside /workspace'
-    - '    deny    /etc, /proc, /sys'
-    - ''
-    - '  MCP'
-    - '    allow   dhi         https://dhi.io/mcp   [pre-registered]'
-    - '    allow   filesystem  stdio://filesystem    [pre-registered]'
-    - '    deny    * (default)'
-    - ''
-    - '  IMAGE POLICY'
-    - '    require base image matching {{ state.org }}/dhi-*'
-- id: sbx-mcp-add
-  when:
-    command:
-    - sbx
-    - mcp
-    - add
-    args:
-      0:
-        any: true
-      --url:
-        any: true
-  then:
-    state:
-      sandbox.mcpAdded: true
-    output:
-    - '  Added MCP server ''{{ args.0 }}'' (remote) → {{ args.url }}'
-    - '  transport: streamable-http'
-    - '  tools are available to agents in this sandbox, governed by your MCP policy.'
-- id: claude-mcp-add
-  when:
-    command:
-    - claude
-    - mcp
-    - add
-    args:
-      0:
-        any: true
-      --url:
-        any: true
-  then:
-    state:
-      sandbox.mcpAdded: true
-    output:
-    - '  ✔  MCP server registered: {{ args.0 }}'
-    - '     URL:       {{ args.url }}'
-    - '     Transport: Streamable HTTP'
-    - '     Auth:      none required for read-only tools'
-    - '     Tools:'
-    - '       dhi_list_repositories'
-    - '       dhi_get_repository'
-    - '       dhi_get_tag_definition'
-    - '       dhi_get_image_details'
-    - '       dhi_get_image_packages'
-    - '       dhi_get_image_cves'
-    - '       dhi_get_image_attestations'
-    - '       dhi_list_mirrors'
-    - '       dhi_create_mirror'
-    - '       dhi_remove_mirror'
-- id: sbx-mcp-list-populated
-  when:
-    command:
-    - sbx
-    - mcp
-    - list
-    state:
-      sandbox.mcpAdded: true
-  then:
-    output:
-    - '  NAME        TYPE     URL'
-    - '  dhi         remote   https://dhi.io/mcp'
-    - '  filesystem  local    stdio://filesystem-mcp'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  2 MCP servers configured.'
-- id: sbx-mcp-ls-populated
-  when:
-    command:
-    - sbx
-    - mcp
-    - ls
-    state:
-      sandbox.mcpAdded: true
-  then:
-    output:
-    - '  NAME        TYPE     URL'
-    - '  dhi         remote   https://dhi.io/mcp'
-    - '  filesystem  local    stdio://filesystem-mcp'
-    - '  ──────────────────────────────────────────────────────────────'
-    - '  2 MCP servers configured.'
-- id: sbx-mcp-list-empty
-  when:
-    command:
-    - sbx
-    - mcp
-    - list
-  then:
-    output:
-    - '  No MCP servers configured. Add one with: sbx mcp add <name> --url <url>'
-- id: sbx-mcp-ls-empty
-  when:
-    command:
-    - sbx
-    - mcp
-    - ls
-  then:
-    output:
-    - '  No MCP servers configured. Add one with: sbx mcp add <name> --url <url>'
-- id: claude-fix-with-mcp
-  when:
-    agent: true
-    promptContains:
-    - Scout
-    - policy
-    - failing
-    - hardened
-    - DHI
-    - Dockerfile
-    state:
-      sandbox.mcpAdded: true
-  then:
-    state:
-      dhi.imageBuilt: true
-      ci.policyPassed: true
-    files:
-    - create: Dockerfile
-      content: 'FROM {{ state.org }}/dhi-node:22
+  # brew trust — must come BEFORE brew-install-sbx (first-match-wins for [brew, trust])
+  - id: brew-trust-tap
+    when:
+      command: [brew, trust]
+      args:
+        0: "docker/tap"
+    then:
+      output:
+        - "==> Trusting docker/tap"
+        - { text: "    ✓  Tap docker/tap is now trusted", delay: short }
+        - "    ✓  Future installs from docker/tap will not trigger security warnings"
 
+  # brew install — package name is positional arg 0, not part of command path
+  - id: brew-install-sbx
+    when:
+      command: [brew, install]
+      args:
+        0: "docker/tap/sbx"
+    then:
+      state: { sbx_installed: true }
+      output:
+        - "==> Tapping docker/tap"
+        - { text: "Cloning into '/usr/local/Homebrew/Library/Taps/docker/homebrew-tap'...", delay: clone }
+        - "remote: Enumerating objects: 41, done."
+        - "Tapped 3 formulae (43 files, 52.1KB)."
+        - "==> Fetching docker/tap/sbx"
+        - { text: "==> Downloading https://github.com/docker/sbx-cli/releases/download/v0.12.1/sbx_darwin_arm64.tar.gz", delay: pull }
+        - "==> Installing sbx from docker/tap"
+        - "  /usr/local/Cellar/sbx/0.12.1: 5 files, 18.7MB"
+        - ""
+        - "Run 'sbx --help' to get started."
+        - "Docs: https://docs.docker.com/ai/sandboxes/"
 
-        WORKDIR /app
+  # sbx subcommands — ALL specific ones BEFORE the bare `sbx` catch-all
 
+  # sbx login — BEFORE the catch-all (first-match-wins; [sbx, login] is more specific than [sbx])
+  - id: sbx-login
+    when:
+      command: [sbx, login]
+    then:
+      output:
+        - "Opening browser for Docker Hub authentication..."
+        - { text: "    ✓  Authenticated as raveendiran.ramshankar@docker.com", delay: short }
+        - { text: "    ✓  Organization: {{ state.configured_org }}", delay: short }
+        - "    ✓  sbx CLI logged in — sandboxes will inherit org policies"
 
-        COPY package*.json ./
+  # sbx secret set — BEFORE the catch-all
+  - id: sbx-secret-set
+    when:
+      command: [sbx, secret, set]
+      args:
+        0: { any: true }
+        1: { any: true }
+    then:
+      output:
+        - "    ✓  Secret '{{ args.1 }}' stored for sandbox '{{ args.0 }}'"
+        - "    ✓  Value is held by the host-side credential proxy"
+        - "    ✓  The token is never written into the sandbox or its environment variables"
 
-        RUN npm ci --omit=dev
+  - id: sbx-version
+    when:
+      command: [sbx, version]
+    then:
+      output:
+        - "sbx version 0.12.1"
+        - "  platform: darwin/arm64"
+        - "  runtime: microvm (Apple Virtualization Framework)"
+        - "  docs: https://docs.docker.com/ai/sandboxes/"
 
+  # sbx policy ls — org mode (default, sbx_policy_mode = "org")
+  - id: sbx-policy-ls-org
+    when:
+      command: [sbx, policy, ls]
+      state: { sbx_policy_mode: "org" }
+    then:
+      output:
+        - "  NAME                         TYPE        ACTION  SCOPE"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  default-deny-network         network     deny    all outbound traffic"
+        - "  default-deny-filesystem      filesystem  deny    /etc, /root, /proc"
+        - "  default-allow-mcp-approved   mcp         allow   servers in org allowlist"
+        - "  org-audit-logging            audit       enable  all tool calls logged"
+        - ""
+        - "  4 policies active (source: org — {{ state.configured_org }})"
+        - "  Manage at: https://hub.docker.com/orgs/{{ state.configured_org }}/scout/sandboxes"
 
-        COPY src/ ./src/
+  # sbx policy ls — local mode (sbx_policy_mode = "local")
+  - id: sbx-policy-ls-local
+    when:
+      command: [sbx, policy, ls]
+      state: { sbx_policy_mode: "local" }
+    then:
+      output:
+        - "  NAME                         TYPE        ACTION  SCOPE"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  default-allow-network        network     allow   all outbound traffic"
+        - "  default-deny-filesystem      filesystem  deny    /root (minimal)"
+        - "  default-allow-mcp-all        mcp         allow   all MCP servers"
+        - ""
+        - "  3 policies active (source: local)"
+        - "  No org policies applied — sandbox is not connected to a Docker Hub org."
+        - "  Tip: log in with 'sbx login' to activate org governance."
 
+  # Domain is positional arg 0 — template substitution via {{ args.0 }}
+  - id: sbx-policy-allow-network
+    when:
+      command: [sbx, policy, allow, network]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "    ✓  Network policy updated"
+        - "       Allowed: {{ args.0 }}"
+        - "       Scope: this sandbox session"
+        - ""
+        - "    Note: Org-level policies still enforce the global allowlist."
+        - "    Admins can lock this with 'sbx policy lock network' to prevent overrides."
 
-        EXPOSE 3000
+  # Path is positional arg 0 — template substitution via {{ args.0 }}
+  - id: sbx-policy-deny-filesystem
+    when:
+      command: [sbx, policy, deny, filesystem]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "    ✓  Filesystem policy updated"
+        - "       Denied path: {{ args.0 }}"
+        - "       Any read or write to {{ args.0 }} will be blocked and logged."
 
-        CMD ["node", "src/index.js"]
+  - id: sbx-audit
+    when:
+      command: [sbx, audit]
+    then:
+      output:
+        - "  TIMESTAMP             SANDBOX          EVENT               DETAIL"
+        - "  ───────────────────────────────────────────────────────────────────────────────────────"
+        - "  2026-08-10T09:01:12Z  sbx-claude-abc1  network.allow       github.com (user override)"
+        - "  2026-08-10T09:01:35Z  sbx-claude-abc1  tool.call           Bash: git clone ..."
+        - "  2026-08-10T09:01:52Z  sbx-claude-abc1  tool.call           Read: product-catalog/src/routes/products.js"
+        - "  2026-08-10T09:02:15Z  sbx-claude-abc1  tool.call           Edit: product-catalog/src/routes/products.js"
+        - "  2026-08-10T09:02:41Z  sbx-claude-abc1  tool.call           Bash: docker build ..."
+        - "  2026-08-10T09:03:10Z  sbx-claude-abc1  network.blocked     hub.docker.com (policy: default-deny)"
+        - "  2026-08-10T09:03:22Z  sbx-claude-abc1  tool.call           Bash: docker scout policy ..."
+        - ""
+        - "  7 events logged. Full log: https://hub.docker.com/orgs/{{ state.configured_org }}/scout/audit"
 
-        '
-    output:
-    - ''
-    - text: "\e[36m●\e[0m I'll search the DHI catalog for a hardened Node.js 22 image,"
-      delay: short
-    - '  verify its CVE status, then update the Dockerfile.'
-    - ''
-    - text: '  ● mcp__dhi__dhi_list_repositories({query: "node"})'
-      delay: short
-    - '    ⎿  3 results'
-    - '       node:22  distroless=true  signed=true  sbom=true  fips=true  stig=true'
-    - '       node:20  distroless=true  signed=true  sbom=true'
-    - '       node:18  distroless=true  signed=true  sbom=true'
-    - ''
-    - text: '  ● mcp__dhi__dhi_get_image_cves({repo: "node", tag: "22"})'
-      delay: scan
-    - '    ⎿  critical=0  high=0  medium=1(vex)  low=4  policy=PASS'
-    - ''
-    - text: "\e[36m●\e[0m node:22 passes the Scout policy. The correct image is:"
-      delay: short
-    - "  \e[38;5;179m{{ state.org }}/dhi-node:22\e[0m"
-    - ''
-    - text: '  ● Read(Dockerfile)'
-      delay: short
-    - '    ⎿  Read 9 lines from Dockerfile'
-    - ''
-    - text: '  ● Edit(Dockerfile)'
-      delay: short
-    - '    ⎿  Edited Dockerfile'
-    - ''
-    - '      1 - FROM node:22-alpine'
-    - "      1 + FROM \e[32m{{ state.org }}/dhi-node:22\e[0m"
-    - ''
-    - "\e[36m●\e[0m Supply Chain Security — all policies now pass:"
-    - "  \e[32m✔\e[0m  no-critical-cves     (0 critical, 0 high)"
-    - "  \e[32m✔\e[0m  require-sbom         (sbom attestation present)"
-    - "  \e[32m✔\e[0m  require-provenance   (slsa level 2, mode=max)"
-    - "  \e[32m✔\e[0m  image-signed         (cosign signature verified)"
-    - "  \e[32m✔\e[0m  base-image-policy    (matches {{ state.org }}/dhi-*)"
-    - ''
-    - "\e[2m· Done  (4 tool uses · 18.2s · esc to interrupt)\e[0m"
-    - ''
-- id: agent-fallback
-  when:
-    agent: true
-  then:
-    output:
-    - ''
-    - "\e[36m●\e[0m I can help with the tasks in this demo. Try one of these:"
-    - ''
-    - "  \e[2m·\e[0m Find the bug in the product lookup route and fix it"
-    - "  \e[2m·\e[0m The Scout policy gate is failing — use the DHI catalog to fix it"
-    - "  \e[2m·\e[0m sbx mcp list"
-    - "  \e[2m·\e[0m claude mcp add dhi --url https://dhi.io/mcp"
-    - ''
-- id: claude-session
-  when:
-    command:
-    - claude
-  then:
-    session:
-      prompt: "\e[32m>\e[0m "
-      intro:
-      - ''
-      - "\e[38;5;143m  ── Claude Code  ·  claude-sonnet-4-6  ·  /workspace/catalog-service ──\e[0m"
-      - ''
-      outro:
-      - ''
-      - "\e[2m  Session ended.\e[0m"
-      - ''
+  # sbx start — org mode: all Hub-managed policies enforced
+  - id: sbx-start-org
+    when:
+      command: [sbx, start]
+      state: { sbx_policy_mode: "org" }
+    then:
+      state: { sbx_started: true }
+      output:
+        - "  Starting sandbox (policy source: org — {{ state.configured_org }})..."
+        - { text: "  ✓  microVM booted (Apple Virtualization Framework)", delay: short }
+        - { text: "  ✓  Docker daemon initialized inside sandbox", delay: short }
+        - { text: "  ✓  Filesystem isolation: /etc, /root, /proc blocked", delay: short }
+        - { text: "  ✓  Network policy: default-deny (allow domains explicitly)", delay: short }
+        - { text: "  ✓  MCP gateway: connected to {{ state.configured_org }} org allowlist", delay: short }
+        - { text: "  ✓  Credential proxy: active (Docker Hub, GitHub injected)", delay: short }
+        - { text: "  ✓  Audit logging: streaming to {{ state.configured_org }} org", delay: short }
+        - ""
+        - "  Sandbox ID: sbx-claude-abc1"
+        - "  Working dir: /home/agent/workspace"
+        - "  Policy source: org ({{ state.configured_org }})"
+        - ""
+        - "  Run 'claude' to start Claude Code inside this sandbox."
+
+  # sbx start — local mode: minimal local policies, no org governance
+  - id: sbx-start-local
+    when:
+      command: [sbx, start]
+      state: { sbx_policy_mode: "local" }
+    then:
+      state: { sbx_started: true }
+      output:
+        - "  Starting sandbox (policy source: local)..."
+        - { text: "  ✓  microVM booted (Apple Virtualization Framework)", delay: short }
+        - { text: "  ✓  Docker daemon initialized inside sandbox", delay: short }
+        - { text: "  ~  Filesystem isolation: /root blocked (minimal)", delay: short }
+        - { text: "  ~  Network policy: default-allow (all domains permitted)", delay: short }
+        - { text: "  ~  MCP gateway: all servers permitted (no org filter)", delay: short }
+        - { text: "  ~  Credential proxy: active (local credentials only)", delay: short }
+        - { text: "  ✗  Audit logging: disabled (no org connected)", delay: short }
+        - ""
+        - "  Sandbox ID: sbx-local-xyz9"
+        - "  Working dir: /home/agent/workspace"
+        - "  Policy source: local (no org governance)"
+        - ""
+        - "  Run 'claude' to start Claude Code inside this sandbox."
+
+  - id: sbx-ls
+    when:
+      command: [sbx, ls]
+    then:
+      output:
+        - "  SANDBOX ID       STATUS    IMAGE                  STARTED     AGENT"
+        - "  ───────────────────────────────────────────────────────────────────────────"
+        - "  sbx-claude-abc1  running   claude/sandbox:latest  2 min ago   claude-code"
+
+  # ─────────────────────────────────────────
+  # SBX KITS — section 5
+  # All [sbx, kit, *] scenarios BEFORE the [sbx] catch-all (first-match-wins)
+  # ─────────────────────────────────────────
+
+  - id: sbx-kit-ls
+    when:
+      command: [sbx, kit, ls]
+    then:
+      output:
+        - "  BUILT-IN KITS"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  NAME                      VERSION  BASE IMAGE                    POLICIES"
+        - "  ai-coding-standard        1.3.0    dhi.io/ubuntu:22.04-hardened  org-default"
+        - "  node-24-fips              1.0.2    dhi.io/node:24-alpine         fips-strict"
+        - "  python-3.12-hardened      1.1.0    dhi.io/python:3.12-slim       org-default"
+        - "  java-21-graalvm           1.0.0    dhi.io/eclipse-temurin:21     org-default"
+        - ""
+        - "  ORG KITS ({{ state.configured_org }})"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  NAME                                  VERSION  BASE IMAGE                    POLICIES"
+        - "  {{ state.configured_org }}/ai-coding-standard  v1       dhi.io/ubuntu:22.04-hardened  custom-strict"
+        - ""
+        - "  Run 'sbx kit inspect <name>' to see what a kit includes."
+        - "  Run 'sbx kit pull <name>' to download a kit."
+
+  - id: sbx-kit-inspect
+    when:
+      command: [sbx, kit, inspect]
+      args:
+        0: "ai-coding-standard"
+    then:
+      output:
+        - "  Kit: ai-coding-standard  v1.3.0"
+        - "  Publisher: Docker Inc."
+        - "  Scout attestations: ✓ SBOM  ✓ Provenance  ✓ VEX"
+        - ""
+        - "  BASE IMAGE"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  dhi.io/ubuntu:22.04-hardened  │ 0 critical CVEs │ FIPS 140-2 │ STIG"
+        - ""
+        - "  PRE-INSTALLED TOOLS"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  claude-code   1.x     AI coding agent"
+        - "  git           2.43    Version control"
+        - "  docker        26.1    Container runtime (sandbox-internal daemon)"
+        - "  docker-scout  1.14    CVE + policy scanner"
+        - "  gh            2.50    GitHub CLI"
+        - "  curl, jq      latest  HTTP + JSON utilities"
+        - ""
+        - "  POLICY PROFILE  (org-default)"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  network     default-deny  (github.com, docker.io pre-allowed)"
+        - "  filesystem  /etc /root /proc blocked"
+        - "  mcp         claude.ai tools + docker-hub-mcp pre-approved"
+        - "  audit       streaming to org"
+        - ""
+        - "  WORKSPACE SEED"
+        - "  ─────────────────────────────────────────────────────────────────────"
+        - "  .claude/CLAUDE.md     Lab-specific agent instructions"
+        - "  .env.template         Common env var scaffold"
+        - "  README.md             Quick-start guide"
+        - ""
+        - "  Size: 512 MB compressed | 1.1 GB expanded"
+        - "  Pull: sbx kit pull ai-coding-standard"
+
+  - id: sbx-kit-inspect-any
+    when:
+      command: [sbx, kit, inspect]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "  Kit: {{ args.0 }}"
+        - "  Run 'sbx kit inspect ai-coding-standard' for a detailed example."
+
+  - id: sbx-kit-pull
+    when:
+      command: [sbx, kit, pull]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "  Pulling kit '{{ args.0 }}'..."
+        - { text: "  [===========>            ]  45%   230 MB / 512 MB", delay: pull }
+        - { text: "  [====================    ]  82%   420 MB / 512 MB", delay: pull }
+        - { text: "  [========================] 100%   512 MB / 512 MB  ✓", delay: build }
+        - ""
+        - "  ✓  Kit '{{ args.0 }}' pulled and verified"
+        - "  ✓  Base image attestations: SBOM ✓  Provenance ✓  VEX ✓"
+        - "  ✓  Cosign signature verified (Docker Inc.)"
+        - "  ✓  Policy profile loaded: org-default"
+        - ""
+        - "  Start a sandbox with this kit: sbx kit start {{ args.0 }}"
+
+  - id: sbx-kit-start
+    when:
+      command: [sbx, kit, start]
+      args:
+        0: { any: true }
+    then:
+      state: { sbx_started: true }
+      output:
+        - "  Starting sandbox from kit '{{ args.0 }}'..."
+        - { text: "  ✓  microVM booted (dhi.io/ubuntu:22.04-hardened)", delay: short }
+        - { text: "  ✓  Tools initialized: claude-code, git, docker, docker-scout, gh", delay: short }
+        - { text: "  ✓  Policy profile applied: org-default ({{ state.configured_org }})", delay: short }
+        - { text: "  ✓  MCP gateway: claude.ai + docker-hub-mcp allowed", delay: short }
+        - { text: "  ✓  Workspace seeded: .claude/CLAUDE.md, .env.template, README.md", delay: short }
+        - { text: "  ✓  Credential proxy: active (Docker Hub + GitHub injected)", delay: short }
+        - { text: "  ✓  Audit logging: streaming to {{ state.configured_org }}", delay: short }
+        - ""
+        - "  Sandbox ID: sbx-claude-kit-7f3a"
+        - "  Kit:        {{ args.0 }}"
+        - "  Policy:     org ({{ state.configured_org }})"
+        - ""
+        - "  Run 'claude' to start Claude Code inside this sandbox."
+
+  - id: sbx-kit-create
+    when:
+      command: [sbx, kit, create]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "  Capturing current sandbox state as kit '{{ args.0 }}'..."
+        - { text: "  ✓  Tools snapshotted: claude-code, git, docker, docker-scout, gh", delay: short }
+        - { text: "  ✓  Policy profile captured (network, filesystem, MCP rules)", delay: short }
+        - { text: "  ✓  Workspace template packaged (/home/agent/workspace)", delay: short }
+        - { text: "  ✓  SBOM generated: 61 components indexed", delay: short }
+        - { text: "  ✓  Provenance attestation attached", delay: short }
+        - ""
+        - "  Kit '{{ args.0 }}' created locally"
+        - "  Base image: dhi.io/ubuntu:22.04-hardened  │ 0 critical CVEs"
+        - "  Size: 487 MB compressed"
+        - ""
+        - "  Push to your org: sbx kit push {{ state.configured_org }}/{{ args.0 }}:v1"
+
+  - id: sbx-kit-push
+    when:
+      command: [sbx, kit, push]
+      args:
+        0: { any: true }
+    then:
+      output:
+        - "  Pushing kit '{{ args.0 }}'..."
+        - { text: "  ✓  Signing kit with org key ({{ state.configured_org }})", delay: short }
+        - { text: "  [===========>            ]  45%   219 MB / 487 MB", delay: pull }
+        - { text: "  [========================] 100%   487 MB / 487 MB  ✓", delay: pull }
+        - ""
+        - "  ✓  Kit pushed to Docker Hub org registry"
+        - "  ✓  Available to all members of '{{ state.configured_org }}'"
+        - "  ✓  Cosign signature: attached"
+        - "  ✓  Visible at: hub.docker.com/orgs/{{ state.configured_org }}/sandboxes/kits"
+        - ""
+        - "  Team members can now run: sbx kit pull {{ args.0 }}"
+
+  # sbx bare — catch-all; MUST be last among all sbx scenarios
+  # command: [sbx] matches any `sbx ...` command; specific ones above take priority
+  - id: sbx-help
+    when:
+      command: [sbx]
+    then:
+      output:
+        - "Docker Sandbox CLI"
+        - ""
+        - "Usage:"
+        - "  sbx [command]"
+        - ""
+        - "Available Commands:"
+        - "  start       Start a new sandbox"
+        - "  stop        Stop a running sandbox"
+        - "  ls          List running sandboxes"
+        - "  kit         Manage sandbox kits (pull, start, create, push)"
+        - "  policy      Manage sandbox policies"
+        - "  ports       Publish or list ports"
+        - "  secret      Manage sandbox secrets"
+        - "  audit       Show audit log"
+        - "  logs        Show sandbox logs"
+        - "  exec        Execute a command in a sandbox"
+        - "  version     Show version"
+        - ""
+        - "Use 'sbx [command] --help' for more information."
+
+  - id: claude-start
+    when:
+      command: [claude]
+    then:
+      output:
+        - "╭─────────────────────────────────────────────────────╮"
+        - "│            Claude Code (inside sandbox)             │"
+        - "│  Sandbox: sbx-claude-abc1  │  Org: {{ state.configured_org }}       │"
+        - "│  Network: restricted       │  Audit: enabled         │"
+        - "╰─────────────────────────────────────────────────────╯"
+        - ""
+        - "> What would you like to do?"
+
+  # grep — flags go in args, pattern is positional arg 0 (spec §6.2)
+  - id: grep-find-bug
+    when:
+      command: [grep]
+      args:
+        -rn: true
+        0: "final_price"
+    then:
+      state: { bug_found: true }
+      output:
+        - "product-catalog/src/routes/products.js:29:      product.final_price = product.price * product.discount_rate;"
+
+  - id: grep-find-discount
+    when:
+      command: [grep]
+      args:
+        -rn: true
+        0: "discount"
+    then:
+      state: { bug_found: true }
+      output:
+        - "product-catalog/src/routes/products.js:22:        SELECT id, name, price, discount_rate, image_url, category"
+        - "product-catalog/src/routes/products.js:29:      product.final_price = product.price * product.discount_rate;"
+
+  - id: git-diff-fix
+    when:
+      command: [git, diff]
+    then:
+      state: { bug_fixed: true }
+      output:
+        - "diff --git a/product-catalog/src/routes/products.js b/product-catalog/src/routes/products.js"
+        - "index 4f9a2c1..8e3d7b2 100644"
+        - "--- a/product-catalog/src/routes/products.js"
+        - "+++ b/product-catalog/src/routes/products.js"
+        - "@@ -26,7 +26,7 @@ router.get('/:id', async (req, res) => {"
+        - "   const product = result.rows[0];"
+        - "   if (!product) return res.status(404).json({ error: 'Not found' });"
+        - " "
+        - "-  product.final_price = product.price * product.discount_rate;"
+        - "+  product.final_price = product.price * (1 - product.discount_rate);"
+        - " "
+        - "   res.json(product);"
+        - " });"
+
+  - id: git-add
+    when:
+      command: [git, add]
+      args:
+        0: { any: true }
+    then:
+      output: []
+
+  - id: git-commit
+    when:
+      command: [git, commit]
+    then:
+      output:
+        - "[fix/discount-calculation 9a3c7f2] Fix discount calculation and upgrade to dhi.io/node:24-alpine"
+        - " 2 files changed, 3 insertions(+), 3 deletions(-)"
+        - " rename Dockerfile => Dockerfile.old (100%)"
+        - " rename Dockerfile.dhi => Dockerfile (95%)"
+
+  # git push — BEFORE fix; triggers CI failure (specific state condition takes priority)
+  - id: git-push-fail
+    when:
+      command: [git, push]
+      state: { image_patched: false }
+    then:
+      output:
+        - "Enumerating objects: 5, done."
+        - "Counting objects: 100% (5/5), done."
+        - { text: "Writing objects: 100% (3/3), 892 bytes | 892.00 KiB/s, done.", delay: clone }
+        - ""
+        - "remote: Resolving deltas: 100% (1/1), done."
+        - "To https://github.com/dockersamples/product-catalog.git"
+        - "   abc1234..d3f9a12  main → main"
+        - ""
+        - "  ✗  CI triggered — pipeline failed at 'Docker Scout — CVE scan'"
+        - "  ✗  3 critical, 11 high CVEs in node:18-alpine — image blocked from registry"
+        - "  View run: https://github.com/dockersamples/product-catalog/actions/runs/..."
+      ci:
+        workflow: product-catalog-ci
+        commit: "Initial push (node:18-alpine, pre-fix)"
+        conclusion: failure
+        failedStep: scout-cves
+        error: "3 critical, 11 high CVEs detected — merge blocked."
+
+  # git push — AFTER fix + DHI switch; triggers CI success (catch-all, image_patched = true)
+  - id: git-push
+    when:
+      command: [git, push]
+    then:
+      output:
+        - "Enumerating objects: 7, done."
+        - "Counting objects: 100% (7/7), done."
+        - { text: "Delta compression using up to 10 threads", delay: short }
+        - "Compressing objects: 100% (4/4), done."
+        - { text: "Writing objects: 100% (4/4), 1.23 KiB | 1.23 MiB/s, done.", delay: clone }
+        - "Total 4 (delta 2), reused 0 (delta 0), pack-reused 0"
+        - ""
+        - "remote: Resolving deltas: 100% (2/2), completed with 2 local objects."
+        - "To https://github.com/dockersamples/product-catalog.git"
+        - "   abc1234..9a3c7f2  fix/discount-calculation → fix/discount-calculation"
+        - ""
+        - "  ✓  CI triggered: https://github.com/dockersamples/product-catalog/actions"
+        - "  ✓  Docker Scout CVE scan: PASS (0 critical, 0 high)"
+        - "  ✓  Docker Scout policy gate: PASS (5/5 policies)"
+        - "  ✓  Image pushed to registry: dockersamples/product-catalog:9a3c7f2"
+      ci:
+        workflow: product-catalog-ci
+        commit: "Fix discount calculation and upgrade to dhi.io/node:24-alpine"

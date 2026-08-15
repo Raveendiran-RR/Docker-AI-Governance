@@ -1,17 +1,19 @@
-title: "Docker AI Governance Demo"
-description: >
-  The catalog-service-node — a Node.js REST API backed by PostgreSQL, Kafka, LocalStack
-  and WireMock — was containerised by an AI agent without supervision. Over this demo you
-  harden what it shipped with Docker Hardened Images and Scout policy gates, then govern
-  the agent itself inside an isolated sandbox, and finally connect it to the DHI MCP
-  server so it can resolve its own policy failure.
+title: "DHI & AI Governance: Secure Supply Chain to Sandbox"
+description: "End-to-end demo of Docker Hub Integration hardened images, Docker Scout policy enforcement, CI/CD security gates, and AI agent governance with Docker Sandboxes."
+
+catalog:
+  icon: security
+  tags: ["dhi", "governance", "docker-scout", "sandboxes", "ai", "supply-chain", "sbom"]
 
 simulator: simulator.yaml
 
 terminals:
-  - id: main
-    title: Terminal
-    icon: terminal
+  - id: host
+    title: Host
+    icon: dns
+  - id: sandbox
+    title: Sandbox
+    icon: smart_toy
 
 features:
   ci:
@@ -19,215 +21,157 @@ features:
     icon: rocket_launch
 
 files:
-  README.md: |
-    # catalog-service-node
+  README.txt: |
+    ============================================================
+     DHI & AI Governance Lab
+    ============================================================
 
-    Product Catalog service: a REST API over a PostgreSQL product database, wired to
-    Kafka (events), LocalStack (S3 uploads) and WireMock (an upstream pricing API),
-    with a small React frontend.
+    Sections:
+      1. Introduction to DHI and AI Governance
+      2. Org Setup — Docker login + Scout policies
+      3. DHI Product Catalog — CVEs, SBOM, VEX, attestations
+      4. Sandboxes & AI Governance — policies, bug fix, CI fix
 
-    Layout:
-      backend    src/            Express API (Node.js)
-      frontend   frontend/       React SPA (Vite)
-      database   db/schema.sql   PostgreSQL schema + seed data
+    Follow the steps on the left panel.
+    Every command in the terminal is fully simulated.
+    ============================================================
 
-    Run locally:  npm install && npm start   (needs Postgres, Kafka, LocalStack, WireMock)
-    API:          http://localhost:3000/api/products
+  product-catalog/Dockerfile: |
+    # syntax=docker/dockerfile:1
 
-  package.json: |
-    {
-      "name": "catalog-service-node",
-      "version": "1.0.0",
-      "description": "Product Catalog REST API over Postgres, with Kafka, LocalStack (S3) and WireMock",
-      "main": "src/index.js",
-      "scripts": {
-        "start": "node src/index.js",
-        "dev": "nodemon src/index.js",
-        "test": "vitest run"
-      },
-      "dependencies": {
-        "express": "^4.19.2",
-        "pg": "^8.11.5",
-        "kafkajs": "^2.2.4",
-        "@aws-sdk/client-s3": "^3.588.0",
-        "axios": "^1.7.2",
-        "dotenv": "^16.4.5",
-        "pino": "^9.1.0"
-      },
-      "devDependencies": {
-        "nodemon": "^3.1.0",
-        "vitest": "^1.6.0"
-      }
-    }
+    # Build stage — note: uses community node image (CVEs present)
+    FROM node:18-alpine AS build
+    WORKDIR /app
+    COPY package*.json ./
+    RUN npm ci --only=production
+    COPY src/ ./src/
 
-  src/index.js: |
-    const express = require("express");
-    const products = require("./routes/products");
+    FROM node:18-alpine
+    WORKDIR /app
+    COPY --from=build /app ./
+    EXPOSE 8080
+    CMD ["node", "src/index.js"]
 
-    const app = express();
-    app.use(express.json());
-    app.use("/api/products", products);
+  product-catalog/Dockerfile.dhi: |
+    # syntax=docker/dockerfile:1
 
-    app.listen(3000, () => console.log("catalog-service listening on :3000"));
+    # Build stage — DHI hardened image: 0 critical CVEs, FIPS-validated, STIG-hardened
+    FROM dhi.io/node:24-alpine AS build
+    WORKDIR /app
+    COPY package*.json ./
+    RUN npm ci --only=production
+    COPY src/ ./src/
 
-  src/routes/products.js: |
-    const { Router } = require("express");
-    const { pool } = require("../db/pool");
-    const axios = require("axios");
+    FROM dhi.io/node:24-alpine
+    WORKDIR /app
+    COPY --from=build /app ./
+    EXPOSE 8080
+    CMD ["node", "src/index.js"]
 
-    const upstream = process.env.CATALOG_UPSTREAM || "http://wiremock:8080";
-    const router = Router();
+  product-catalog/src/routes/products.js: |
+    const express = require('express');
+    const router = express.Router();
+    const db = require('../db');
 
-    router.get("/", async (_req, res) => {
-      const { rows } = await pool.query("SELECT * FROM products ORDER BY id");
-      res.json(rows);
+    // GET /api/products — list all products
+    router.get('/', async (req, res) => {
+      const products = await db.query(`
+        SELECT id, name, price, discount_rate, image_url, category
+        FROM products ORDER BY id
+      `);
+      res.json(products.rows);
     });
 
-    router.get("/:id", async (req, res) => {
-      const { rows } = await pool.query("SELECT * FROM products WHERE id = $1", [req.params.id]);
-      if (!rows.length) return res.status(404).json({ error: "not found" });
-      // upstream pricing comes from WireMock in dev
-      const price = await axios.get(`${upstream}/price/${req.params.id}`).then(r => r.data).catch(() => null);
-      res.json({ ...rows[0], price });
+    // GET /api/products/:id — single product detail
+    router.get('/:id', async (req, res) => {
+      const { id } = req.params;
+      const result = await db.query(
+        'SELECT * FROM products WHERE id = $1', [id]
+      );
+      const product = result.rows[0];
+      if (!product) return res.status(404).json({ error: 'Not found' });
+
+      // BUG: multiplies price BY the discount rate instead of (1 - rate)
+      // e.g. $100 at 20% off → should be $80, but shows $20
+      product.final_price = product.price * product.discount_rate;
+
+      res.json(product);
     });
 
     module.exports = router;
 
-  src/db/pool.js: |
-    const { Pool } = require("pg");
-
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-    module.exports = { pool };
-
-  src/events/kafka.js: |
-    const { Kafka } = require("kafkajs");
-
-    const kafka = new Kafka({ brokers: [process.env.KAFKA_BROKER || "kafka:9092"] });
-
-    module.exports = { producer: kafka.producer() };
-
-  db/schema.sql: |
-    CREATE TABLE IF NOT EXISTS products (
-      id    SERIAL PRIMARY KEY,
-      name  TEXT NOT NULL,
-      sku   TEXT UNIQUE NOT NULL,
-      price NUMERIC(10, 2) NOT NULL DEFAULT 0
-    );
-
-    INSERT INTO products (name, sku, price) VALUES
-      ('Widget', 'WGT-001', 9.99),
-      ('Gadget', 'GDG-002', 19.99)
-    ON CONFLICT (sku) DO NOTHING;
-
-  frontend/src/App.jsx: |
-    import { useEffect, useState } from "react";
-
-    export default function App() {
-      const [products, setProducts] = useState([]);
-      useEffect(() => {
-        fetch("/api/products").then((r) => r.json()).then(setProducts);
-      }, []);
-      return (
-        <main>
-          <h1>Product Catalog</h1>
-          <ul>
-            {products.map((p) => (
-              <li key={p.id}>{p.name} — ${p.price}</li>
-            ))}
-          </ul>
-        </main>
-      );
-    }
-
-  Dockerfile: |
-    FROM node:22-alpine
-
-    WORKDIR /app
-
-    COPY package*.json ./
-    RUN npm ci --omit=dev
-
-    COPY src/ ./src/
-
-    EXPOSE 3000
-    CMD ["node", "src/index.js"]
-
-  newDockerfile: |
-    # Docker Hardened Image — optimised for production
-    # Replaces: FROM node:22-alpine
-    #
-    # What changes:
-    #   - Distroless base: no shell, no package manager at runtime
-    #   - 0 CRITICAL / 0 HIGH CVEs  (vs 2 CRITICAL in node:22-alpine)
-    #   - FIPS 140-2 validated cryptography
-    #   - STIG v1R4 compliant
-    #   - SBOM, SLSA provenance, and cosign signature attached at build
-    #   - Default non-root user: node (uid=1000)
-    #
-    # Image format: <org>/dhi-<name>:<tag>
-    # Update YOUR_ORG to your Docker org name before use.
-    #
-    FROM [org]/dhi-node:22
-
-    WORKDIR /app
-
-    COPY package*.json ./
-    RUN npm ci --omit=dev
-
-    COPY src/ ./src/
-
-    EXPOSE 3000
-    CMD ["node", "src/index.js"]
-
-  .github/workflows/ci.yml: |
-    name: CI
+  product-catalog/.github/workflows/ci.yml: |
+    name: Product Catalog CI
 
     on:
       push:
-        branches: [main]
+        branches: [main, "fix/**"]
+      pull_request:
 
     jobs:
       build:
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@v4
-          - name: Build image
-            run: docker build -t catalog-service .
 
-      policy-gate:
-        needs: build
-        runs-on: ubuntu-latest
-        steps:
-          - name: Docker Scout policy check
+          - name: Build image
+            run: docker build -t product-catalog:${{ github.sha }} .
+
+          - name: Docker Scout — CVE scan
+            uses: docker/scout-action@v1
+            with:
+              command: cves
+              image: product-catalog:${{ github.sha }}
+              only-severities: critical,high
+              exit-code: true          # fails CI if critical/high found
+
+          - name: Docker Scout — policy gate
             uses: docker/scout-action@v1
             with:
               command: policy
-              image: catalog-service
-              organization: YOUR_ORG
-              exit-code: true
+              image: product-catalog:${{ github.sha }}
+              exit-code: true          # fails CI if any policy not satisfied
 
-      push:
-        needs: policy-gate
-        runs-on: ubuntu-latest
-        steps:
           - name: Push to registry
-            run: docker push $DOCKER_ORG/catalog-service:latest
+            if: github.ref == 'refs/heads/main'
+            run: docker push product-catalog:${{ github.sha }}
+
+  product-catalog/vex.json: |
+    {
+      "bomFormat": "CycloneDX",
+      "specVersion": "1.4",
+      "version": 1,
+      "vulnerabilities": [
+        {
+          "id": "CVE-2023-44487",
+          "analysis": {
+            "state": "not_affected",
+            "justification": "protected_by_mitigating_control",
+            "detail": "HTTP/2 not enabled in this service; only HTTP/1.1 used internally."
+          }
+        }
+      ]
+    }
 
 sections:
-  - title: "Intro & Setup"
+  - title: "1. Introduction"
     contentPath: 00-intro.md
 
-  - title: "DHI — Product Catalog"
-    contentPath: 01-dhi-catalog.md
+  - title: "2. Org Setup & Scout Policies"
+    contentPath: 01-org-setup.md
 
-  - title: "Sandbox & AI Governance"
-    contentPath: 02-sandbox.md
+  - title: "3. DHI — Product Catalog"
+    contentPath: 02-product-catalog.md
 
-  - title: "Org Policies & DHI MCP"
-    contentPath: 03-org-policies.md
+  - title: "4. Sandboxes and AI Governance"
+    contentPath: 03-sandboxes.md
+
+  - title: "5. SBX Kits"
+    contentPath: 04-sbx-kits.md
 
 variables:
-  org: [org]
-  prompt: "What is your org ?"
-    
+  org: dockerdemo
+  dhi_node_image: "$$org$$/dhi-node:24-alpine"
+  catalog_image: "product-catalog:latest"
+  catalog_fixed_image: "product-catalog:dhi"
+  scout_org: "dockerdemo"

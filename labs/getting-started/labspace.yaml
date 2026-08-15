@@ -1,42 +1,233 @@
-title: "My Lab"
-description: "A starter Simspace lab — edit these files, preview locally, and push to deploy."
+title: "Docker AI Governance Demo"
+description: >
+  The catalog-service-node — a Node.js REST API backed by PostgreSQL, Kafka, LocalStack
+  and WireMock — was containerised by an AI agent without supervision. Over this demo you
+  harden what it shipped with Docker Hardened Images and Scout policy gates, then govern
+  the agent itself inside an isolated sandbox, and finally connect it to the DHI MCP
+  server so it can resolve its own policy failure.
 
-# Optional catalog card metadata. It's only shown on the landing page when this
-# repo has two or more labs (a single lab is entered directly). labs.json is
-# GENERATED from this block — you never write or edit labs.json by hand.
-catalog:
-  icon: school
-  tags: ["getting started"]
-
-# Command behaviour lives in simulator.yaml (relative to this file).
 simulator: simulator.yaml
 
-# One terminal tab. Add more (each with a unique id) for multi-shell labs.
 terminals:
-  - id: host
+  - id: main
     title: Terminal
     icon: terminal
 
-# Seed the virtual filesystem. Built-in `ls`/`cat` reflect these immediately.
+features:
+  ci:
+    title: CI Pipeline
+    icon: rocket_launch
+
 files:
-  README.txt: |
-    Welcome to your lab's virtual filesystem.
-    Files created by scenarios and save-as blocks appear here too.
+  README.md: |
+    # catalog-service-node
 
-# Ordered instruction pages (markdown), rendered in the left-hand panel.
-# `steps:` are this section's MILESTONES: each id is completed by a scenario in
-# simulator.yaml tagged `completes: <id>`. They drive the nav check-marks, saved
-# progress, and the instructor funnel — give every hands-on section at least one.
-# A reading-only page omits `steps:` entirely.
+    Product Catalog service: a REST API over a PostgreSQL product database, wired to
+    Kafka (events), LocalStack (S3 uploads) and WireMock (an upstream pricing API),
+    with a small React frontend.
+
+    Layout:
+      backend    src/            Express API (Node.js)
+      frontend   frontend/       React SPA (Vite)
+      database   db/schema.sql   PostgreSQL schema + seed data
+
+    Run locally:  npm install && npm start   (needs Postgres, Kafka, LocalStack, WireMock)
+    API:          http://localhost:3000/api/products
+
+  package.json: |
+    {
+      "name": "catalog-service-node",
+      "version": "1.0.0",
+      "description": "Product Catalog REST API over Postgres, with Kafka, LocalStack (S3) and WireMock",
+      "main": "src/index.js",
+      "scripts": {
+        "start": "node src/index.js",
+        "dev": "nodemon src/index.js",
+        "test": "vitest run"
+      },
+      "dependencies": {
+        "express": "^4.19.2",
+        "pg": "^8.11.5",
+        "kafkajs": "^2.2.4",
+        "@aws-sdk/client-s3": "^3.588.0",
+        "axios": "^1.7.2",
+        "dotenv": "^16.4.5",
+        "pino": "^9.1.0"
+      },
+      "devDependencies": {
+        "nodemon": "^3.1.0",
+        "vitest": "^1.6.0"
+      }
+    }
+
+  src/index.js: |
+    const express = require("express");
+    const products = require("./routes/products");
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/products", products);
+
+    app.listen(3000, () => console.log("catalog-service listening on :3000"));
+
+  src/routes/products.js: |
+    const { Router } = require("express");
+    const { pool } = require("../db/pool");
+    const axios = require("axios");
+
+    const upstream = process.env.CATALOG_UPSTREAM || "http://wiremock:8080";
+    const router = Router();
+
+    router.get("/", async (_req, res) => {
+      const { rows } = await pool.query("SELECT * FROM products ORDER BY id");
+      res.json(rows);
+    });
+
+    router.get("/:id", async (req, res) => {
+      const { rows } = await pool.query("SELECT * FROM products WHERE id = $1", [req.params.id]);
+      if (!rows.length) return res.status(404).json({ error: "not found" });
+      // upstream pricing comes from WireMock in dev
+      const price = await axios.get(`${upstream}/price/${req.params.id}`).then(r => r.data).catch(() => null);
+      res.json({ ...rows[0], price });
+    });
+
+    module.exports = router;
+
+  src/db/pool.js: |
+    const { Pool } = require("pg");
+
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+    module.exports = { pool };
+
+  src/events/kafka.js: |
+    const { Kafka } = require("kafkajs");
+
+    const kafka = new Kafka({ brokers: [process.env.KAFKA_BROKER || "kafka:9092"] });
+
+    module.exports = { producer: kafka.producer() };
+
+  db/schema.sql: |
+    CREATE TABLE IF NOT EXISTS products (
+      id    SERIAL PRIMARY KEY,
+      name  TEXT NOT NULL,
+      sku   TEXT UNIQUE NOT NULL,
+      price NUMERIC(10, 2) NOT NULL DEFAULT 0
+    );
+
+    INSERT INTO products (name, sku, price) VALUES
+      ('Widget', 'WGT-001', 9.99),
+      ('Gadget', 'GDG-002', 19.99)
+    ON CONFLICT (sku) DO NOTHING;
+
+  frontend/src/App.jsx: |
+    import { useEffect, useState } from "react";
+
+    export default function App() {
+      const [products, setProducts] = useState([]);
+      useEffect(() => {
+        fetch("/api/products").then((r) => r.json()).then(setProducts);
+      }, []);
+      return (
+        <main>
+          <h1>Product Catalog</h1>
+          <ul>
+            {products.map((p) => (
+              <li key={p.id}>{p.name} — ${p.price}</li>
+            ))}
+          </ul>
+        </main>
+      );
+    }
+
+  Dockerfile: |
+    FROM node:22-alpine
+
+    WORKDIR /app
+
+    COPY package*.json ./
+    RUN npm ci --omit=dev
+
+    COPY src/ ./src/
+
+    EXPOSE 3000
+    CMD ["node", "src/index.js"]
+
+  newDockerfile: |
+    # Docker Hardened Image — optimised for production
+    # Replaces: FROM node:22-alpine
+    #
+    # What changes:
+    #   - Distroless base: no shell, no package manager at runtime
+    #   - 0 CRITICAL / 0 HIGH CVEs  (vs 2 CRITICAL in node:22-alpine)
+    #   - FIPS 140-2 validated cryptography
+    #   - STIG v1R4 compliant
+    #   - SBOM, SLSA provenance, and cosign signature attached at build
+    #   - Default non-root user: node (uid=1000)
+    #
+    # Image format: <org>/dhi-<name>:<tag>
+    # Update YOUR_ORG to your Docker org name before use.
+    #
+    FROM [org]/dhi-node:22
+
+    WORKDIR /app
+
+    COPY package*.json ./
+    RUN npm ci --omit=dev
+
+    COPY src/ ./src/
+
+    EXPOSE 3000
+    CMD ["node", "src/index.js"]
+
+  .github/workflows/ci.yml: |
+    name: CI
+
+    on:
+      push:
+        branches: [main]
+
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - name: Build image
+            run: docker build -t catalog-service .
+
+      policy-gate:
+        needs: build
+        runs-on: ubuntu-latest
+        steps:
+          - name: Docker Scout policy check
+            uses: docker/scout-action@v1
+            with:
+              command: policy
+              image: catalog-service
+              organization: YOUR_ORG
+              exit-code: true
+
+      push:
+        needs: policy-gate
+        runs-on: ubuntu-latest
+        steps:
+          - name: Push to registry
+            run: docker push $DOCKER_ORG/catalog-service:latest
+
 sections:
-  - title: Introduction
+  - title: "Intro & Setup"
     contentPath: 00-intro.md
-    steps:
-      - id: say-hello
-        title: "Say hello from the terminal"
-      - id: run-a-container
-        title: "Run a container"
 
-# $$name$$ in markdown is replaced with these values at render time.
+  - title: "DHI — Product Catalog"
+    contentPath: 01-dhi-catalog.md
+
+  - title: "Sandbox & AI Governance"
+    contentPath: 02-sandbox.md
+
+  - title: "Org Policies & DHI MCP"
+    contentPath: 03-org-policies.md
+
 variables:
-  name: world
+  org: [org]
+  prompt: "What is your org ?"
+    

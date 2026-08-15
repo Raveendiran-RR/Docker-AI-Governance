@@ -1,6 +1,6 @@
-name: Deploy labs to GitHub Pages
+name: Deploy lab to GitHub Pages
 
-# Validates your labs and publishes them to GitHub Pages on every push to main.
+# Validates this lab and publishes it to GitHub Pages on every push to main.
 # All the work lives in the reusable workflow in dockersamples/simspace, so this
 # file stays a one-liner. Enable Pages first: Settings → Pages → Source:
 # "GitHub Actions".
@@ -19,13 +19,7 @@ jobs:
   deploy:
     uses: dockersamples/simspace/.github/workflows/deploy-lab.yml@main
     with:
-      labs-dir: labs
+      labs-dir: lab
       # Pin to a released version for stable labs, e.g. "1". "latest" tracks the
       # newest runtime — convenient, but the app can change under you.
       runtime-tag: "latest"
-      # OPTIONAL — presence + analytics. Point this at your deployed `pulse`
-      # backend to turn on live "who's here" presence and the instructor
-      # insights dashboard for ALL labs. Opt a single lab out with
-      # `tracking: false` in its labspace.yaml. Leave it commented to deploy
-      # with tracking disabled (labs stay fully static, no backend calls).
-      # pulse-endpoint: "https://pulse.example.com"

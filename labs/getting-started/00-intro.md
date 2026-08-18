@@ -1,6 +1,6 @@
 # DHI & AI Governance: Secure Supply Chain to Sandbox
 
-## What we're covering
+## What we're covering -- browser test 
 
 This lab walks through the complete Docker security story — from trusted base images through to AI agent governance. By the end you'll have seen how Docker Hub Integration (DHI), Docker Scout, and Docker Sandboxes work together to enforce policy at every layer of the development lifecycle.
 

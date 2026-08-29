@@ -1,6 +1,6 @@
 # Section 4 — Sandboxes and AI Governance
 
-## Archietecture
+## Architecture
 ![SBX](./sbx-security.png)
 
 ## What is a Docker Sandbox?
@@ -11,7 +11,7 @@
 
 ### Five reasons to run AI agents in a sandbox
 
-1. **Filesystem isolation** — the agent cannot read `/etc/passwd`, your SSH keys, or any path outside its workspace, regardless of what it tries.
+1. **Filesystem isolation** — the microVM has its own root filesystem, separate from the host; filesystem *policy* additionally governs which host paths (e.g. your SSH keys) can be mounted into the sandbox workspace in the first place.
 2. **Network governance** — outbound traffic is blocked by default; admins define an allowlist of domains the agent may reach per org.
 3. **MCP control** — only MCP servers explicitly approved in your Docker Hub org are available inside the sandbox; rogue tool servers can't be injected.
 4. **Credential proxy** — Docker Hub and GitHub tokens are injected transparently at the network layer; the agent never sees raw credentials.
@@ -23,15 +23,23 @@
 
 Key layers of sandbox isolation (outer → inner):
 
-```text no-run-button
-Host machine
-  └── sbx daemon (manages microVMs)
-        └── microVM (Apple VZ / KVM)
-              ├── Docker daemon (full, isolated)
-              ├── Filesystem (isolated, org policy applied)
-              ├── Network (default-deny, org allowlist)
-              ├── MCP gateway (org-approved servers only)
-              └── Credential proxy (token injection, no raw secrets)
+```mermaid no-run-button
+flowchart TD
+    Host["<b>Host machine</b>"]
+    Daemon["<b>sbx daemon</b><br/>manages microVMs"]
+    VM["<b>microVM</b><br/>Apple VZ / KVM"]
+    Docker["Docker daemon<br/>full, isolated"]
+    FS["Filesystem<br/>own root FS; host mounts governed by policy"]
+    Net["Network<br/>default-deny, org allowlist"]
+    MCP["MCP gateway<br/>org-approved servers only"]
+    Cred["Credential proxy<br/>token injection, no raw secrets"]
+
+    Host --> Daemon --> VM
+    VM --> Docker
+    VM --> FS
+    VM --> Net
+    VM --> MCP
+    VM --> Cred
 ```
 
 ---
@@ -82,21 +90,7 @@ sbx
 
 ## Step 2: Understand sandbox policies
 
-Before starting a sandbox, review what policies your org enforces. Use the **Settings** toggle (gear icon next to Reset) to switch between **Org** and **Local** policy modes and see how the output changes.
-
-```bash terminal-id=host
-sbx policy ls
-```
-
-| Mode | Policy | Type | Effect |
-|---|---|---|---|
-| **Org** | `default-deny-network` | network | All outbound traffic blocked unless explicitly allowed |
-| **Org** | `default-deny-filesystem` | filesystem | `/etc`, `/root`, `/proc` are read/write blocked |
-| **Org** | `default-allow-mcp-approved` | MCP | Only org-approved MCP servers are available |
-| **Org** | `org-audit-logging` | audit | Every agent action is logged to the org stream |
-| **Local** | `default-allow-network` | network | All outbound traffic permitted |
-| **Local** | `default-deny-filesystem` | filesystem | `/root` only (minimal) |
-| **Local** | `default-allow-mcp-all` | MCP | All MCP servers permitted |
+Before starting a sandbox, set up the network rules it'll need, then review what's active. Use the **Settings** toggle (gear icon next to Reset) to switch between **Org** and **Local** policy modes and see how the output changes.
 
 ### Allow specific network domains
 
@@ -112,13 +106,45 @@ To allow PyPI (if using Python packages):
 sbx policy allow network pypi.org
 ```
 
-### Lock down a filesystem path
+### Review what's active
 
 ```bash terminal-id=host
-sbx policy deny filesystem /etc
+sbx policy ls
 ```
 
-Any read or write attempt to `/etc` will be blocked and logged — even from inside a container that the agent starts.
+`sbx policy ls` only lists **network** and **filesystem** rules — those are the two resource types it actually governs. Each row is a policy source (`org` or `local`), not an individual rule — the `SUMMARY` column rolls up the allow/deny counts per resource type. MCP access and audit logging are real, but governed differently: MCP by the sandbox's MCP gateway (centrally managed in Docker Home — there's no local `sbx policy` toggle for it), audit by `sbx policy log` and the org's Docker Hub audit dashboard (Step 9).
+
+| Mode | Source | Applies to | What it means |
+|---|---|---|---|
+| **Org** | `org-default` | all | network default-deny; filesystem locked to the workspace |
+| **Org / Local** | `local-policy` | all | your explicit rules — right now, the two `allow network` calls above |
+| **Local** | `local-policy` | all | with no org connected, network defaults to *allow* instead of deny |
+
+### Check what a policy decision would be — before any sandbox exists
+
+`sbx policy check` dry-runs a policy decision against your current rules, no running sandbox required:
+
+```bash terminal-id=host
+sbx policy check network github.com
+```
+
+```bash terminal-id=host
+sbx policy check network raw-tracker.example
+```
+
+The first is **ALLOW** (the rule you just added); the second is **DENY** — it matches nothing but the org's default-deny-network catch-all.
+
+### Filesystem policy — a different mechanism than network
+
+There's no `sbx policy allow/deny filesystem <path>` command — filesystem access isn't a rule you toggle, it's controlled by **which paths you mount** when you start a sandbox. By default only the project workspace is mounted; everything else on the host (`/etc`, `/root`, your SSH keys) is simply never visible. Extra read-only mounts are added at `sbx run` time with a `:ro` suffix, e.g. `sbx run claude ./docs:ro`.
+
+You can still view the effective filesystem policy:
+
+```bash terminal-id=host
+sbx policy ls --type filesystem
+```
+
+We'll confirm this is actually enforced — along with network and MCP — once the sandbox is running, in Step 4.
 
 ---
 
@@ -130,19 +156,22 @@ One of the most important sandbox features is the **credential proxy**. It means
 - Credentials are injected at the network level when the agent makes authenticated requests.
 - If the sandbox is compromised, the attacker gets no usable credentials — only the proxy-signed request flows.
 
-```text no-run-button
-Agent                    Proxy                    Docker Hub
-  │                        │                         │
-  │── docker push ─────────▶│                         │
-  │                        │── inject Bearer token ──▶│
-  │                        │◀─ 200 OK ───────────────│
-  │◀─ push complete ────────│                         │
+```mermaid no-run-button
+sequenceDiagram
+    participant Agent
+    participant Proxy
+    participant Hub as Docker Hub
+
+    Agent->>Proxy: docker push
+    Proxy->>Hub: inject Bearer token
+    Hub-->>Proxy: 200 OK
+    Proxy-->>Agent: push complete
 ```
 
 Set a sandbox secret — this runs on the **host terminal**, not inside the sandbox:
 
 ```bash no-run-button
-sbx secret set sbx-claude-abc1 github -t "$(gh auth token)"
+sbx secret set github --sandbox sbx-claude-abc1 -t "$(gh auth token)"
 ```
 
 After this, `git push` inside the sandbox works transparently — no token ever appears in the agent's environment variables or logs.
@@ -151,124 +180,79 @@ After this, `git push` inside the sandbox works transparently — no token ever 
 
 ---
 
-## Step 4: Connect with the org and start the sandbox
+## Step 4: Start the sandbox and enter a Claude Code session
 
-Your sandbox is automatically linked to your Docker Hub org when you're logged in. The output below reflects the **Settings** toggle — switch to Local mode to compare the enforcement differences.
+Your sandbox is automatically linked to your Docker Hub org when you're logged in. The real `sbx` CLI boots the sandbox *and* launches the agent in one call — there's no separate "start" step, and once it launches you're talking to Claude Code directly rather than typing shell commands yourself. The output below reflects the **Settings** toggle — switch to Local mode to compare the enforcement differences.
 
-```bash terminal-id=host
-sbx start
+Switch to the **Sandbox** tab (top right), then run:
+
+```bash terminal-id=sandbox
+sbx run --name sbx-claude-abc1 claude
 ```
 
-The sandbox boots a microVM, initializes a full Docker daemon inside it, applies all org policies (or local-only if toggled), and attaches the credential proxy.
+The sandbox boots a microVM, initializes a full Docker daemon inside it, applies all org policies (or local-only if toggled), attaches the credential proxy, and drops you into a Claude Code session. From here on, everything you type is a **prompt to Claude**, not a shell command — Claude runs the actual tool calls (reads, edits, builds, pushes) on your behalf, and every one of them is logged.
+
+### Check the policies are actually enforced
+
+Ask Claude to check its own boundaries — this exercises the filesystem, network, and MCP policies from Step 2 for real:
+
+```prompt terminal-id=sandbox
+Before we start, check what you can and can't access from inside this sandbox — filesystem, network, and MCP servers.
+```
+
+Claude confirms: only the workspace is mounted (nothing else from the host is visible — matching the Step 2 explanation), `github.com`/`pypi.org` are reachable while everything else is blocked (matching the `sbx policy check` results), and an attempt to add an unapproved MCP server is refused by the sandbox's MCP gateway.
 
 ---
 
-## Step 5: Start Claude Code
+## Step 5: Find and fix the pricing bug
 
-The **Sandbox** terminal tab on the right now represents the isolated microVM. Switch to it — all commands from this step run inside the sandbox.
+Ask Claude to investigate the pricing issue spotted in Section 3, and fix it:
 
-```bash terminal-id=sandbox
-claude
+```prompt terminal-id=sandbox
+Find the pricing bug I found in Section 3 and fix it.
 ```
 
-Claude Code is now running inside the isolated microVM. It can read and write files in the workspace, run Docker commands against the sandbox's private daemon, and make network calls — but only to domains your org has allowed, and every action is logged.
+Claude greps the codebase, finds `catalog-service-node/src/services/ProductService.js:29`, and shows the fix as a diff — the single-character change (`* discount_rate` → `* (1 - discount_rate)`). Every read, the edit, and the diff are captured in the org's audit log.
 
 ---
 
-## Step 6: Find the bug in the product catalog
+## Step 6: Fix the CVEs — switch to the DHI image
 
-Ask Claude to investigate the pricing issue we spotted in Section 3. It searches the codebase:
+While it's in there, have Claude also swap the base image:
 
-```bash terminal-id=sandbox
-grep -rn final_price product-catalog/src/
+```prompt terminal-id=sandbox
+Also switch the Dockerfile to the DHI hardened base image and rebuild the image.
 ```
 
-Found it: `product-catalog/src/routes/products.js:29`
-
-Open the file:
-
-```bash terminal-id=sandbox
-cat product-catalog/src/routes/products.js
-```
-
-The bug is on line 29:
-
-```javascript no-run-button
-// BUG: multiplies price BY the discount rate
-// $99.99 × 0.20 = $20.00  ← wrong
-product.final_price = product.price * product.discount_rate;
-
-// FIX: price × (1 - discount_rate) gives the discounted price
-// $99.99 × (1 - 0.20) = $79.99  ← correct
-product.final_price = product.price * (1 - product.discount_rate);
-```
-
-Claude edits the file to apply the fix. Review the diff:
-
-```bash terminal-id=sandbox
-git diff
-```
-
-The single-character fix (`* discount_rate` → `* (1 - discount_rate)`) is confirmed. All reads, the file edit, and the diff command are captured in the org's audit log.
+Claude updates the Dockerfile (`FROM node:22-slim` → `FROM dhi.io/node:24-debian13`) and rebuilds inside the sandbox's private Docker daemon. The DHI base image is FIPS-validated, STIG-hardened, and has 0 fixable CVEs.
 
 ---
 
-## Step 7: Fix the CVEs — switch to the DHI image
+## Step 7: Verify — run the Scout policy gate
 
-While Claude has the repo open, it also updates the `Dockerfile` to use the DHI hardened image:
-
-```diff no-run-button
-- FROM node:18-alpine
-+ FROM dhi.io/node:24-alpine
+```prompt terminal-id=sandbox
+Run the Docker Scout policy check on the new image to confirm it passes.
 ```
 
-Build the patched image inside the sandbox's Docker daemon:
-
-```bash terminal-id=sandbox
-docker build -t product-catalog:dhi -f product-catalog/Dockerfile.dhi ./product-catalog
-```
-
-The DHI base image is pulled from `dhi.io/node:24-alpine` — FIPS-validated, STIG-hardened, 0 fixable CVEs.
-
----
-
-## Step 8: Verify — run the Scout policy gate
-
-Run the same policy check the CI pipeline will run:
-
-```bash terminal-id=sandbox
-docker scout policy product-catalog:dhi
-```
-
-**Result: 5 / 5 policies satisfied** ✓
-
-Every policy that previously failed now passes:
+**Result: 5 / 5 policies satisfied** ✓ — every policy that failed back in Section 3 (4 of the 5 — non-root was already fine) now passes:
 
 | Policy | Before | After |
 |---|---|---|
 | No critical/high CVEs | ✗ 14 found | ✓ 0 found |
 | Supply chain attestations | ✗ missing | ✓ present |
 | No fixable vulnerabilities | ✗ 35 fixable | ✓ 0 fixable |
-| Approved base images | ✗ `node:18-alpine` | ✓ `dhi.io/node:24-alpine` |
-| Default non-root user | ✗ missing | ✓ USER node |
+| Approved base images | ✗ `node:22-slim` | ✓ `dhi.io/node:24-debian13` |
+| Default non-root user | ✓ already satisfied (`USER appuser`) | ✓ still satisfied |
 
 ---
 
-## Step 9: Commit, push, watch CI go green
+## Step 8: Commit, push, watch CI go green
 
-```bash terminal-id=sandbox
-git add product-catalog/
+```prompt terminal-id=sandbox
+Commit these changes and push them so CI can verify.
 ```
 
-```bash terminal-id=sandbox
-git commit -m "Fix discount calculation and upgrade to dhi.io/node:24-alpine"
-```
-
-```bash terminal-id=sandbox
-git push
-```
-
-The push triggers the CI pipeline. Switch to the **CI Pipeline** tab to watch it go green — all four steps pass this time:
+Claude stages, commits, and pushes — no token ever appears in its environment or logs, thanks to the credential proxy from Step 3. The push triggers the CI pipeline. Switch to the **CI Pipeline** tab to watch it go green — all four steps pass this time:
 
 1. **Build image** → succeeds
 2. **Docker Scout — CVE scan** → 0 critical, 0 high → **PASS**
@@ -279,17 +263,25 @@ The push triggers the CI pipeline. Switch to the **CI Pipeline** tab to watch it
 
 ---
 
-## Step 10: Review the audit log
+## Step 9: End the session and review the policy log
 
-Everything Claude Code did inside the sandbox is captured. Switch back to the **Host** terminal:
+There's no Ctrl+C for a simulated session — leave it the way you'd leave the real thing, by typing `/exit`:
 
-```bash terminal-id=host
-sbx audit
+```prompt terminal-id=sandbox
+/exit
 ```
 
-The audit log shows every tool call (Read, Edit, Bash), every network connection, and every blocked attempt — streamed in real time to your Docker Hub org's audit dashboard.
+Then switch back to the **Host** tab (top right).
 
-> Audit logs are available at:  
+Everything Claude Code did inside the sandbox is captured. On the **Host** terminal:
+
+```bash terminal-id=host
+sbx policy log
+```
+
+The policy log shows every network request this sandbox made, split into **Blocked** and **Allowed** — `hub.docker.com` was blocked (no matching allow rule), while `github.com` and `pypi.org` went through, matching what you set up in Step 2. The full history streams in real time to your Docker Hub org's audit dashboard.
+
+> Org-wide audit history is available at:  
 > **Hub → Org → Docker Scout → Sandbox Audit**
 
 ---
@@ -298,15 +290,18 @@ The audit log shows every tool call (Read, Edit, Bash), every network connection
 
 | What we demonstrated | How |
 |---|---|
-| FIPS + STIG hardened images | `dhi.io/node:24-alpine` via Docker Hub Integration |
+| FIPS + STIG hardened images | `dhi.io/node:24-debian13` via Docker Hub Integration |
 | CVE scanning | `docker scout cves` with policy gate |
 | SBOM, VEX, attestations | `docker scout sbom` + `docker scout attestation list` |
 | CI pipeline enforcement | `docker/scout-action` with `exit-code: true` — CI tab shows fail → fix → pass |
-| AI agent isolation | `sbx start` — microVM, network/filesystem policies |
+| AI agent isolation | `sbx run` — microVM, network/filesystem policies |
 | Org vs local policies | Settings toggle — switch modes to compare enforcement |
+| Network policy, live | `sbx policy check network` — dry-run allow/deny before any sandbox exists |
+| Filesystem policy, live | Only the workspace is mounted — confirmed by Claude from inside the session |
+| MCP policy, live | Unapproved MCP server add attempt refused by the sandbox gateway |
 | Credential governance | Credential proxy — no raw tokens in agent scope |
-| Full auditability | `sbx audit` — every action logged to org stream |
-| Bug found + fixed | Claude Code inside sandbox — one-line fix, confirmed by diff |
+| Full auditability | `sbx policy log` — every action logged, streamed to the org audit stream |
+| Bug found + fixed | One prompt to Claude Code inside the sandbox — confirmed by diff |
 | CVEs remediated | Base image swap: 14 critical/high → 0, CI green |
 
 Docker Hub Integration, Docker Scout, and Docker Sandboxes form a **continuous governance loop** — from the base image you pull, through the CI policy gate, to every action an AI agent takes in your codebase.

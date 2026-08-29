@@ -49,15 +49,17 @@ This tells every subsequent `docker scout` command to evaluate images against th
 
 ---
 
-## Step 4: Review active policies
+## Step 4: Publish the org's policy bundle
 
-List the policies that will govern every image your CI pipeline builds:
+`docker scout policy` (the real Docker Scout CLI command — experimental) evaluates
+images against a Rego policy bundle. Publish the bundle that will govern every image
+your CI pipeline builds:
 
 ```bash
-docker scout policy ls
+docker scout policy publish --policy-dir ./policies $$org$$/policies:latest
 ```
 
-You'll see five policies:
+The bundle contains five policies:
 
 | Policy | What it enforces |
 |---|---|
@@ -67,7 +69,8 @@ You'll see five policies:
 | **Approved base images** | Only `dhi.io/*` images are allowed as base images |
 | **Default non-root user** | Dockerfile must include a `USER` directive |
 
-> Manage policies at: **Hub → `$$org$$` → Docker Scout → Policies**  
+> Evaluate any image against this bundle with `docker scout policy <image> --org $$org$$`
+> (the Docker Hub "Policies" dashboard page is being retired in favor of this CLI command).  
 > Docs: [docs.docker.com/scout/policy](https://docs.docker.com/scout/policy/)
 
 ---
@@ -78,10 +81,10 @@ The **Approved base images** policy is the critical one for this lab. It means:
 
 ```dockerfile no-run-button
 # This will FAIL the policy gate:
-FROM node:18-alpine
+FROM node:22-slim
 
 # This will PASS:
-FROM $org$/node:24-alpine
+FROM dhi.io/node:24-debian13
 ```
 
 DHI (Docker Hub Integration) images at `dhi.io/` are:

@@ -1,6 +1,6 @@
 # DHI & AI Governance: Secure Supply Chain to Sandbox
 
-## What we're covering -- browser test 
+## What we're covering
 
 This lab walks through the complete Docker security story — from trusted base images through to AI agent governance. By the end you'll have seen how Docker Hub Integration (DHI), Docker Scout, and Docker Sandboxes work together to enforce policy at every layer of the development lifecycle.
 
@@ -33,20 +33,18 @@ AI coding agents can read, write, and execute — and they do it fast. Without g
 
 ## Lab flow
 
-```text no-run-button
-Org setup           Org login → Docker Scout enabled → policies defined
-    ↓
-Product catalog     Clone → build (node:18-alpine) → CVE scan → policy FAIL
-    ↓
-DHI hardening       Switch to dhi.io/node:24-alpine → CVE scan → policy PASS
-    ↓
-SBOM / VEX          Inspect attestations, SBOM, VEX statements, FIPS / STIG metadata
-    ↓
-Sandbox setup       Install sbx → configure network / filesystem / MCP policies
-    ↓
-AI bug fix          Claude Code (in sandbox) finds & fixes product pricing bug
-    ↓
-CI green            Patched image passes all 5 Docker Scout policies → push → CI ✓
+```mermaid no-run-button
+flowchart TD
+    A["<b>Org setup</b><br/>Org login → Docker Scout enabled → policies defined"]
+    B["<b>Product catalog</b><br/>Clone → build (node:22-slim) → CVE scan → policy FAIL"]
+    C["<b>DHI hardening</b><br/>Switch to dhi.io/node:24-debian13 → CVE scan → policy PASS"]
+    D["<b>SBOM / VEX</b><br/>Inspect attestations, SBOM, VEX statements, FIPS / STIG metadata"]
+    E["<b>Sandbox setup</b><br/>Install sbx → configure network / filesystem / MCP policies"]
+    F["<b>AI bug fix</b><br/>Claude Code (in sandbox) finds & fixes product pricing bug"]
+    G["<b>CI green</b><br/>Patched image passes all 5 Docker Scout policies → push → CI ✓"]
+    H["<b>SBX Kits</b><br/>Inspect → pull → run a governed sandbox from a kit → pack & push your own"]
+
+    A --> B --> C --> D --> E --> F --> G --> H
 ```
 
 ---

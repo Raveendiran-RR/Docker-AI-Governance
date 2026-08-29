@@ -1,94 +1,129 @@
 # Section 3 — DHI: Product Catalog
 
-
-### archietecture
+### Architecture
 
 ![Architecture ](./product_catalog.png)
 ![dev- working](./dev-environment-architecture.png)
 
 ## Step 1: Clone the product catalog
 
-We'll use the `dockersamples/product-catalog` app — a Node.js + PostgreSQL storefront.
+We'll use [`dockersamples/catalog-service-node`](https://github.com/dockersamples/catalog-service-node) — a real Docker sample app (Node.js + PostgreSQL + Kafka + S3) used across several Docker demos.
 
 ```bash
-git clone https://github.com/dockersamples/product-catalog
+git clone https://github.com/dockersamples/catalog-service-node
 ```
 
 Browse the project structure:
 
 ```bash
-ls product-catalog/
+ls catalog-service-node/
 ```
 
 Open the Dockerfile to see the base image choice:
 
 ```bash
-cat product-catalog/Dockerfile
+cat catalog-service-node/Dockerfile
 ```
 
-Notice the base image is `node:18-alpine` — the community image from Docker Hub. We'll see what that means for security in a moment.
+Notice the base image is `node:22-slim` — the community image from Docker Hub. It's already a well-built multi-stage Dockerfile (non-root user, minimal final stage) — but the base image itself still carries CVEs, as we'll see in a moment.
 
 ---
 
-## Step 2: Build the image
+## Step 2: Explore the application source
+
+The API lives under `src/`:
 
 ```bash
-docker build -t product-catalog:latest ./product-catalog
+ls catalog-service-node/src/
+```
+
+```bash
+ls catalog-service-node/src/services/
+```
+
+`ProductService.js` is where product data is read from Postgres and merged with live inventory:
+
+```bash
+cat catalog-service-node/src/services/ProductService.js
+```
+
+Notice `getProductById` computes a `final_price` from `price` and `discount_rate` — keep this in mind, we'll come back to it once the app is running.
+
+---
+
+## Step 3: Build the image
+
+```bash
+docker build -t catalog-service-node:latest ./catalog-service-node
 ```
 
 Build succeeds. At the end of the output, Docker Build suggests running `docker scout quickview` — that's your first hint that something may need attention.
 
 ---
 
-## Step 3: Start the services and inspect the API
+## Step 4: Start the dependencies and run the app
 
-Bring up the app and its database:
+This repo's `compose.yaml` doesn't run the API itself — it brings up everything the API depends on (Postgres, Kafka, LocalStack S3, a mocked inventory service, plus pgAdmin and Kafka UI for visualizing them):
+
+```bash
+cat catalog-service-node/compose.yaml
+```
 
 ```bash
 docker compose up
 ```
 
-The product catalog exposes a REST API. Let's query it:
+7 services come up. Note what's *not* in that list: the API itself. The image you built in Step 3 isn't run here either — it's set aside for the Docker Scout scanning steps later (5–9). To actually serve the API and reproduce the bug, follow the repo's own README and run it natively:
 
 ```bash
-curl http://localhost:8080/api/products
+npm install
+```
+
+```bash
+npm run dev
+```
+
+The API is now listening on `:3000`. Let's query it:
+
+```bash
+curl http://localhost:3000/api/products
 ```
 
 The list looks fine — 12 products with prices and discount rates. Now inspect a single product:
 
 ```bash
-curl http://localhost:8080/api/products/1
+curl http://localhost:3000/api/products/1
 ```
 
 > **Notice something?** Widget Pro costs `$99.99` with a `20%` discount.  
 > The correct final price is `$79.99` — but the API returns `$20.00`.  
-> The `final_price` field is wrong: `price × discount_rate` instead of `price × (1 − discount_rate)`.
+> The `final_price` field is wrong: `price × discount_rate` instead of `price × (1 − discount_rate)` — exactly the line we saw in `ProductService.js` in Step 2.
 
 We'll fix this bug in Section 4 using Claude Code inside a Docker Sandbox.
 
 ---
 
-## Step 4: Scan for CVEs with Docker Scout
+## Step 5: Scan for CVEs with Docker Scout
 
 Get a quick overview of the image's vulnerability posture:
 
 ```bash
-docker scout quickview product-catalog:latest
+docker scout quickview catalog-service-node:latest
 ```
 
 Then run the full CVE report:
 
 ```bash
-docker scout cves product-catalog:latest
+docker scout cves catalog-service-node:latest
 ```
 
-The output shows **3 CRITICAL** and **11 HIGH** vulnerabilities in the `node:18-alpine` base image:
+The output shows **3 CRITICAL** and **11 HIGH** vulnerabilities in the `node:22-slim` base image:
 
 | Package | CVE | Severity | CVSS |
 |---|---|---|---|
 | openssl | CVE-2024-0727 | CRITICAL | 9.1 |
 | libssl3 | CVE-2023-5363 | CRITICAL | 9.1 |
-| busybox | CVE-2023-42363 | CRITICAL | 9.8 |
+| glibc | CVE-2023-4911 | CRITICAL | 9.8 |
 | curl | CVE-2023-38545 | HIGH | 8.1 |
 | nghttp2 | CVE-2023-44487 | HIGH | 7.5 |
 | node | CVE-2024-22019 | HIGH | 7.5 |
@@ -97,31 +132,31 @@ All three critical CVEs have fixes available — they'd be eliminated by upgradi
 
 ---
 
-## Step 5: Check policy compliance
+## Step 6: Check policy compliance
 
 Run Docker Scout's policy evaluation against your organization's rules:
 
 ```bash
-docker scout policy product-catalog:latest
+docker scout policy catalog-service-node:latest
 ```
 
-**Result: 0 / 5 policies satisfied.** Every policy fails:
+**Result: 1 / 5 policies satisfied.** Only one passes — this Dockerfile already runs as a non-root user (`USER appuser`), so that policy is already fine. Everything tied to the base image itself still fails:
 
 | Policy | Reason |
 |---|---|
 | No critical/high CVEs | 3 critical, 11 high found |
 | Supply chain attestations | No SBOM or provenance attached |
 | No fixable vulnerabilities | 35 fixable CVEs |
-| Approved base images | `node:18-alpine` not in org allowlist |
-| Default non-root user | No `USER` directive in Dockerfile |
+| Approved base images | `node:22-slim` not in org allowlist |
+| Default non-root user | ✓ already satisfied — `USER appuser` |
 
 ---
 
-## Step 6: See how the CI pipeline blocks this image
+## Step 7: See how the CI pipeline blocks this image
 
 The product catalog CI uses the `docker/scout-action` to gate on policy. Look at the workflow file:
 
-:filelink[.github/workflows/ci.yml]{path="product-catalog/.github/workflows/ci.yml"}
+:filelink[.github/workflows/ci.yml]{path="catalog-service-node/.github/workflows/ci.yml"}
 
 Push to trigger the CI pipeline and watch it fail in the **CI Pipeline** tab:
 
@@ -137,12 +172,18 @@ The pipeline fails at **"Docker Scout — CVE scan"** — 3 critical, 11 high CV
 
 ---
 
-## Step 7: Scan the DHI Node image
+## Step 8: Scan the DHI Node image
 
-Now compare with the DHI-provided equivalent:
+DHI images are hosted on their own registry, so authenticate to it first:
 
 ```bash
-docker scout cves dhi.io/node:24-alpine
+docker login dhi.io
+```
+
+Now compare with the DHI-provided equivalent — a Debian-based tag, matching this repo's `node:22-slim`:
+
+```bash
+docker scout cves dhi.io/node:24-debian13
 ```
 
 **Result: 0 CRITICAL, 0 HIGH, 0 fixable CVEs.**
@@ -155,12 +196,12 @@ The two MEDIUM findings are suppressed by VEX statements from the Docker securit
 
 ---
 
-## Step 8: Inspect the SBOM and attestations
+## Step 9: Inspect the SBOM and attestations
 
 Fetch the full Software Bill of Materials:
 
 ```bash
-docker scout sbom product-catalog:latest
+docker scout sbom catalog-service-node:latest
 ```
 
 The SBOM is in CycloneDX 1.4 format — 77 components listed with their package URLs (`purl`). This can be ingested by any SCA tool, fed to a VEX workflow, or stored in an artifact store for compliance.
@@ -168,7 +209,7 @@ The SBOM is in CycloneDX 1.4 format — 77 components listed with their package 
 View the attestations for the DHI image:
 
 ```bash
-docker scout attestation list dhi.io/node:24-alpine
+docker scout attestation list dhi.io/node:24-debian13
 ```
 
 Three attestation types are present:

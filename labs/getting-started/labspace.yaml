@@ -36,72 +36,223 @@ files:
     Every command in the terminal is fully simulated.
     ============================================================
 
-  product-catalog/Dockerfile: |
-    # syntax=docker/dockerfile:1
+  catalog-service-node/Dockerfile: |
+    ###########################################################
+    # Stage: base
+    #
+    # This stage serves as the base for all of the other stages.
+    # By using this stage, it provides a consistent base for both
+    # the dev and prod versions of the image.
+    ###########################################################
+    FROM node:22-slim AS base
 
-    # Build stage — note: uses community node image (CVEs present)
-    FROM node:18-alpine AS build
-    WORKDIR /app
-    COPY package*.json ./
-    RUN npm ci --only=production
-    COPY src/ ./src/
+    # Setup a non-root user to run the app
+    WORKDIR /usr/local/app
+    RUN useradd -m appuser && chown -R appuser /usr/local/app
+    USER appuser
+    COPY --chown=appuser:appuser package.json package-lock.json ./
 
-    FROM node:18-alpine
-    WORKDIR /app
-    COPY --from=build /app ./
-    EXPOSE 8080
-    CMD ["node", "src/index.js"]
 
-  product-catalog/Dockerfile.dhi: |
-    # syntax=docker/dockerfile:1
+    ###########################################################
+    # Stage: dev
+    ###########################################################
+    FROM base AS dev
+    ENV NODE_ENV=development
+    RUN npm install
+    CMD ["yarn", "dev-container"]
 
-    # Build stage — DHI hardened image: 0 critical CVEs, FIPS-validated, STIG-hardened
-    FROM dhi.io/node:24-alpine AS build
-    WORKDIR /app
-    COPY package*.json ./
-    RUN npm ci --only=production
-    COPY src/ ./src/
 
-    FROM dhi.io/node:24-alpine
-    WORKDIR /app
-    COPY --from=build /app ./
-    EXPOSE 8080
-    CMD ["node", "src/index.js"]
+    ###########################################################
+    # Stage: final
+    ###########################################################
+    FROM base AS final
+    ENV NODE_ENV=production
+    RUN npm ci --production --ignore-scripts && npm cache clean --force
+    COPY ./src ./src
 
-  product-catalog/src/routes/products.js: |
-    const express = require('express');
-    const router = express.Router();
-    const db = require('../db');
+    EXPOSE 3000
 
-    // GET /api/products — list all products
-    router.get('/', async (req, res) => {
-      const products = await db.query(`
-        SELECT id, name, price, discount_rate, image_url, category
-        FROM products ORDER BY id
-      `);
-      res.json(products.rows);
-    });
+    CMD [ "node", "src/index.js" ]
 
-    // GET /api/products/:id — single product detail
-    router.get('/:id', async (req, res) => {
-      const { id } = req.params;
-      const result = await db.query(
-        'SELECT * FROM products WHERE id = $1', [id]
-      );
+  catalog-service-node/Dockerfile.dhi: |
+    ###########################################################
+    # Stage: base — DHI hardened image: 0 critical CVEs, FIPS-validated, STIG-hardened
+    ###########################################################
+    FROM dhi.io/node:24-debian13 AS base
+
+    WORKDIR /usr/local/app
+    RUN useradd -m appuser && chown -R appuser /usr/local/app
+    USER appuser
+    COPY --chown=appuser:appuser package.json package-lock.json ./
+
+
+    ###########################################################
+    # Stage: dev
+    ###########################################################
+    FROM base AS dev
+    ENV NODE_ENV=development
+    RUN npm install
+    CMD ["yarn", "dev-container"]
+
+
+    ###########################################################
+    # Stage: final
+    ###########################################################
+    FROM base AS final
+    ENV NODE_ENV=production
+    RUN npm ci --production --ignore-scripts && npm cache clean --force
+    COPY ./src ./src
+
+    EXPOSE 3000
+
+    CMD [ "node", "src/index.js" ]
+
+  catalog-service-node/package.json: |
+    {
+      "name": "catalog-service-node",
+      "version": "1.0.0",
+      "scripts": {
+        "start": "node src/index.js",
+        "dev": "nodemon --inspect src/index.js --ignore dev",
+        "test": "env-cmd --file .env.node -- jest --detectOpenHandles"
+      },
+      "dependencies": {
+        "@aws-sdk/client-s3": "^3.1030.0",
+        "dotenv": "^17.4.2",
+        "express": "^5.2.1",
+        "kafkajs": "^2.2.4",
+        "multer": "^2.1.1",
+        "pg": "^8.20.0"
+      },
+      "devDependencies": {
+        "@testcontainers/kafka": "^11.14.0",
+        "@testcontainers/localstack": "^11.14.0",
+        "@testcontainers/postgresql": "^11.14.0",
+        "jest": "^29.7.0",
+        "nodemon": "^3.1.4"
+      }
+    }
+
+  catalog-service-node/compose.yaml: |
+    services:
+
+      ################## DEMO WEB CLIENT ##################
+      demo-client:
+        image: node:lts-slim
+        working_dir: /usr/local/app
+        command: yarn dev
+        ports:
+          - 5173:5173
+        volumes:
+          - ./dev/webapp:/usr/local/app
+
+      ############## DATABASE AND VISUALIZER ##############
+      postgres:
+        image: postgres:17.9
+        ports:
+          - "5432:5432"
+        volumes:
+          - ./dev/db:/docker-entrypoint-initdb.d
+        environment:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: catalog
+
+      pgadmin:
+        image: dpage/pgadmin4:9.14.0
+        ports:
+          - "5050:80"
+        environment:
+          PGADMIN_DEFAULT_EMAIL: pgadmin@mycomp.com
+          PGADMIN_DEFAULT_PASSWORD: secret
+        depends_on:
+          - postgres
+
+      ############## LOCAL AWS ##############
+      aws:
+        image: localstack/localstack:4.14.0
+        ports:
+          - "4566:4566"
+        post_start:
+          - command: awslocal s3api create-bucket --bucket product-images
+
+      ############## MOCK INVENTORY SERVICE ##############
+      mock-inventory:
+        image: wiremock/wiremock:3.12.1
+        ports:
+          - 8090:8080
+        volumes:
+          - ./dev/inventory-mocks:/home/wiremock
+
+      ############## KAFKA AND VISUALIZATION ##############
+      kafka:
+        image: apache/kafka:4.0.0
+        ports:
+          - 9092:9092
+
+      kafka-ui:
+        image: kafbat/kafka-ui:v1.2.0
+        ports:
+          - 8080:8080
+        depends_on:
+          - kafka
+
+  catalog-service-node/src/services/ProductService.js: |
+    const { Client } = require("pg");
+
+    const { getInventoryForProduct } = require("./InventoryService");
+    const { uploadFile, getFile } = require("./StorageService");
+    const { publishEvent } = require("./PublisherService");
+
+    let client;
+    async function getClient() {
+      if (!client) {
+        client = new Client();
+        await client.connect();
+      }
+      return client;
+    }
+
+    async function getProducts() {
+      const client = await getClient();
+
+      const result = await client.query("SELECT * FROM products ORDER BY id ASC");
+
+      return result.rows;
+    }
+
+    async function getProductById(id) {
+      const client = await getClient();
+
+      const result = await client.query("SELECT * FROM products WHERE id = $1", [
+        id,
+      ]);
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
       const product = result.rows[0];
-      if (!product) return res.status(404).json({ error: 'Not found' });
+
+      const inventory = await getInventoryForProduct(product.upc);
 
       // BUG: multiplies price BY the discount rate instead of (1 - rate)
       // e.g. $100 at 20% off → should be $80, but shows $20
       product.final_price = product.price * product.discount_rate;
 
-      res.json(product);
-    });
+      return {
+        inventory,
+        ...product,
+      };
+    }
 
-    module.exports = router;
+    module.exports = {
+      getProducts,
+      getProductById,
+    };
 
-  product-catalog/.github/workflows/ci.yml: |
-    name: Product Catalog CI
+  catalog-service-node/.github/workflows/ci.yml: |
+    name: Catalog Service CI
 
     on:
       push:
@@ -115,13 +266,13 @@ files:
           - uses: actions/checkout@v4
 
           - name: Build image
-            run: docker build -t product-catalog:${{ github.sha }} .
+            run: docker build -t catalog-service-node:${{ github.sha }} .
 
           - name: Docker Scout — CVE scan
             uses: docker/scout-action@v1
             with:
               command: cves
-              image: product-catalog:${{ github.sha }}
+              image: catalog-service-node:${{ github.sha }}
               only-severities: critical,high
               exit-code: true          # fails CI if critical/high found
 
@@ -129,14 +280,14 @@ files:
             uses: docker/scout-action@v1
             with:
               command: policy
-              image: product-catalog:${{ github.sha }}
+              image: catalog-service-node:${{ github.sha }}
               exit-code: true          # fails CI if any policy not satisfied
 
           - name: Push to registry
-            if: github.ref == 'refs/heads/main'
-            run: docker push product-catalog:${{ github.sha }}
+            if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/fix/')
+            run: docker push catalog-service-node:${{ github.sha }}
 
-  product-catalog/vex.json: |
+  catalog-service-node/vex.json: |
     {
       "bomFormat": "CycloneDX",
       "specVersion": "1.4",
@@ -159,19 +310,65 @@ sections:
 
   - title: "2. Org Setup & Scout Policies"
     contentPath: 01-org-setup.md
+    steps:
+      - id: docker-login
+        title: "Log in to Docker Hub"
+      - id: scout-enrolled
+        title: "Enroll the org with Docker Scout"
+      - id: org-configured
+        title: "Point Docker Scout at your organization"
 
   - title: "3. DHI — Product Catalog"
     contentPath: 02-product-catalog.md
+    steps:
+      - id: image-built
+        title: "Build the vulnerable image"
+      - id: cves-found
+        title: "Scan for CVEs"
+      - id: policy-fail-seen
+        title: "See the policy gate fail"
+      - id: dhi-cves-clean
+        title: "Scan the DHI image clean"
 
   - title: "4. Sandboxes and AI Governance"
     contentPath: 03-sandboxes.md
+    steps:
+      - id: sbx-installed
+        title: "Install the sbx CLI"
+      - id: sbx-logged-in
+        title: "Log in to sbx"
+      - id: sbx-running
+        title: "Start the sandbox and launch Claude Code"
+      - id: sandbox-policies-checked
+        title: "Check sandbox network, filesystem, and MCP policies"
+      - id: bug-fixed
+        title: "Find and fix the pricing bug"
+      - id: image-patched
+        title: "Rebuild on the DHI image"
+      - id: scout-policy-verified
+        title: "Verify the Scout policy gate passes"
+      - id: ci-green
+        title: "Push and watch CI go green"
 
   - title: "5. SBX Kits"
     contentPath: 04-sbx-kits.md
+    steps:
+      - id: kit-inspected
+        title: "Inspect a kit"
+      - id: kit-pulled
+        title: "Pull a kit"
+      - id: kit-running
+        title: "Run a sandbox from a kit"
+      - id: kit-verified
+        title: "Confirm the kit's tools and workspace are pre-loaded"
+      - id: kit-packed
+        title: "Pack your own kit"
+      - id: kit-pushed
+        title: "Push the kit to your org"
 
 variables:
   org: dockerdemo
-  dhi_node_image: "$$org$$/dhi-node:24-alpine"
-  catalog_image: "product-catalog:latest"
-  catalog_fixed_image: "product-catalog:dhi"
+  dhi_node_image: "$$org$$/dhi-node:24-debian13"
+  catalog_image: "catalog-service-node:latest"
+  catalog_fixed_image: "catalog-service-node:dhi"
   scout_org: "dockerdemo"

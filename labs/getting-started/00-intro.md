@@ -34,8 +34,9 @@ AI coding agents can read, write, and execute — and they do it fast. Without g
 ## Lab flow
 
 
+<img width="177" height="728" alt="image" src="https://github.com/user-attachments/assets/439f5586-d76d-44a6-895b-2645ff171474" />
 
-![Lab flow diagram](./lab-flow.png)
+
 
 ---
 

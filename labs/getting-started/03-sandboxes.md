@@ -1,8 +1,5 @@
 # Section 4 — Sandboxes and AI Governance
 
-## Architecture
-![SBX](./sbx-security.png)
-
 ## What is a Docker Sandbox?
 
 > Isolated microVM environments that let AI coding agents build, run, and iterate — without touching the host system.
@@ -22,25 +19,6 @@
 ## Security architecture
 
 Key layers of sandbox isolation (outer → inner):
-
-```mermaid no-run-button
-flowchart TD
-    Host["<b>Host machine</b>"]
-    Daemon["<b>sbx daemon</b><br/>manages microVMs"]
-    VM["<b>microVM</b><br/>Apple VZ / KVM"]
-    Docker["Docker daemon<br/>full, isolated"]
-    FS["Filesystem<br/>own root FS; host mounts governed by policy"]
-    Net["Network<br/>default-deny, org allowlist"]
-    MCP["MCP gateway<br/>org-approved servers only"]
-    Cred["Credential proxy<br/>token injection, no raw secrets"]
-
-    Host --> Daemon --> VM
-    VM --> Docker
-    VM --> FS
-    VM --> Net
-    VM --> MCP
-    VM --> Cred
-```
 
 ![Sandbox security architecture diagram](./sandbox-architecture.png)
 
@@ -157,18 +135,6 @@ One of the most important sandbox features is the **credential proxy**. It means
 - The agent **never sees** your Docker Hub token or GitHub PAT in plaintext.
 - Credentials are injected at the network level when the agent makes authenticated requests.
 - If the sandbox is compromised, the attacker gets no usable credentials — only the proxy-signed request flows.
-
-```mermaid no-run-button
-sequenceDiagram
-    participant Agent
-    participant Proxy
-    participant Hub as Docker Hub
-
-    Agent->>Proxy: docker push
-    Proxy->>Hub: inject Bearer token
-    Hub-->>Proxy: 200 OK
-    Proxy-->>Agent: push complete
-```
 
 ![Credential proxy sequence diagram](./credential-proxy-flow.png)
 

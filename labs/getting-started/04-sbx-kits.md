@@ -30,6 +30,8 @@ flowchart TD
     Registry --> DevB --> ResultB
 ```
 
+![Kit distribution diagram](./kit-distribution.png)
+
 ---
 
 ## Why Kits Matter for AI Governance

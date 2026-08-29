@@ -47,6 +47,8 @@ flowchart TD
     A --> B --> C --> D --> E --> F --> G --> H
 ```
 
+![Lab flow diagram](./lab-flow.png)
+
 ---
 
 > **Everything in the terminal is simulated.**  

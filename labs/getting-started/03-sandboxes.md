@@ -42,6 +42,8 @@ flowchart TD
     VM --> Cred
 ```
 
+![Sandbox security architecture diagram](./sandbox-architecture.png)
+
 ---
 
 ## Step 1: Install and log in to the sandbox CLI
@@ -167,6 +169,8 @@ sequenceDiagram
     Hub-->>Proxy: 200 OK
     Proxy-->>Agent: push complete
 ```
+
+![Credential proxy sequence diagram](./credential-proxy-flow.png)
 
 Set a sandbox secret — this runs on the **host terminal**, not inside the sandbox:
 

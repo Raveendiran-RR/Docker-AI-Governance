@@ -173,24 +173,7 @@ kit-owned volumes (like agent session state) are preserved across the swap.
 
 ## Kit governance in the org
 
-```text no-run-button
-                    Docker Hub Org
-                    ┌────────────────────────────────────┐
-                    │  Kit Registry (OCI)                │
-                    │                                    │
-                    │  $$org$$/ai-coding-standard:v1  ←──────── admin pushes
-                    │  $$org$$/ai-coding-standard:v2  ←──────── policy update
-                    │  $$org$$/node-24-fips:v1        ←──────── custom tooling
-                    │                                    │
-                    └────────┬───────────────────────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-         Dev sandbox    Dev sandbox    CI sandbox
-         (kit pull)     (kit pull)     (kit pull)
-         identical      identical      identical
-         policy         policy         policy
-```
+![Kit Governance diagram](./Admin-kits.png)
 
 Admins manage kits at:  
 **Hub → `$$org$$` → Docker Scout → Sandboxes → Kits**

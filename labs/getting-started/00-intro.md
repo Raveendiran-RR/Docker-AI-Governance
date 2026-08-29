@@ -33,19 +33,7 @@ AI coding agents can read, write, and execute — and they do it fast. Without g
 
 ## Lab flow
 
-```mermaid no-run-button
-flowchart TD
-    A["<b>Org setup</b><br/>Org login → Docker Scout enabled → policies defined"]
-    B["<b>Product catalog</b><br/>Clone → build (node:22-slim) → CVE scan → policy FAIL"]
-    C["<b>DHI hardening</b><br/>Switch to dhi.io/node:24-debian13 → CVE scan → policy PASS"]
-    D["<b>SBOM / VEX</b><br/>Inspect attestations, SBOM, VEX statements, FIPS / STIG metadata"]
-    E["<b>Sandbox setup</b><br/>Install sbx → configure network / filesystem / MCP policies"]
-    F["<b>AI bug fix</b><br/>Claude Code (in sandbox) finds & fixes product pricing bug"]
-    G["<b>CI green</b><br/>Patched image passes all 5 Docker Scout policies → push → CI ✓"]
-    H["<b>SBX Kits</b><br/>Inspect → pull → run a governed sandbox from a kit → pack & push your own"]
 
-    A --> B --> C --> D --> E --> F --> G --> H
-```
 
 ![Lab flow diagram](./lab-flow.png)
 

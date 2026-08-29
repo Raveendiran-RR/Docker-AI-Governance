@@ -16,19 +16,7 @@ A kit is published once by an admin and consumed by the team. Every developer
 who runs `sbx run --kit ai-coding-standard claude` gets an identical,
 policy-correct environment — no drift, no manual setup.
 
-```mermaid no-run-button
-flowchart TD
-    Admin["Admin packs + pushes kit"]
-    Registry[("OCI registry<br/>kit artifact")]
-    DevA["<b>Developer A</b><br/>sbx run --kit ai-coding-standard"]
-    DevB["<b>Developer B</b><br/>sbx run --kit ai-coding-standard"]
-    ResultA["identical sandbox<br/>identical policy<br/>identical tools"]
-    ResultB["identical sandbox<br/>identical policy<br/>identical tools"]
 
-    Admin --> Registry
-    Registry --> DevA --> ResultA
-    Registry --> DevB --> ResultB
-```
 
 ![Kit distribution diagram](./kit-distribution.png)
 

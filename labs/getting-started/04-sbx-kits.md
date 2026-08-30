@@ -108,13 +108,13 @@ What tools do you have available, and what's already in my workspace?
 
 Claude lists the pre-installed tools (`claude-code`, `git`, `docker`, `docker-scout`, `gh`) and the pre-seeded workspace files (`.claude/CLAUDE.md`, `.env.template`, `README.md`) — none of it set up by hand, all of it from the kit.
 
-When you're done, leave the session and head back to the Host tab for the rest of this section:
+When you're done, leave the session and head back to the Terminal tab for the rest of this section:
 
 ```prompt terminal-id=sandbox
 /exit
 ```
 
-Switch back to the **Host** tab (top right).
+Switch back to the **Terminal** tab (top right).
 
 ---
 
@@ -122,8 +122,35 @@ Switch back to the **Host** tab (top right).
 
 A kit is authored as a local directory — `spec.yaml` declaring credentials,
 network policy, environment variables, startup commands, plus a `files/`
-subdirectory for workspace seed content. Once your `./ai-coding-standard/`
-directory is ready, package it:
+subdirectory for workspace seed content:
+
+```bash terminal-id=host
+ls ./ai-coding-standard/
+```
+
+```bash terminal-id=host
+cat ./ai-coding-standard/spec.yaml
+```
+
+Credentials are declared by **name and type only** — `github: token`, injected as `GITHUB_TOKEN`. The kit never stores or ships an actual secret value; the real value is injected by the credential proxy at runtime (Section 4, Step 3).
+
+The `files/` directory is what gets seeded into every sandbox's workspace, so keep it free of anything sensitive — no tokens, no passwords, no filled-in `.env` values:
+
+```bash terminal-id=host
+ls ./ai-coding-standard/files/
+```
+
+```bash terminal-id=host
+cat ./ai-coding-standard/files/.env.template
+```
+
+```bash terminal-id=host
+cat ./ai-coding-standard/files/.claude/CLAUDE.md
+```
+
+`.env.template` only ever ships variable *names*, never values. `CLAUDE.md` even tells the agent explicitly not to read or print `.env`, SSH keys, or anything under `/etc` — the same boundary Step 4 of Section 4 proved is enforced for real.
+
+Once your `./ai-coding-standard/` directory is ready, package it:
 
 ```bash terminal-id=host
 sbx kit pack ./ai-coding-standard/

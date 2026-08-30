@@ -150,9 +150,53 @@ After this, `git push` inside the sandbox works transparently — no token ever 
 
 ---
 
-## Step 4: Start the sandbox and enter a Claude Code session
+## Step 4: Check the policies, then start the sandbox
 
-Your sandbox is automatically linked to your Docker Hub org when you're logged in. The real `sbx` CLI boots the sandbox *and* launches the agent in one call — there's no separate "start" step, and once it launches you're talking to Claude Code directly rather than typing shell commands yourself. The output below reflects the **Settings** toggle — switch to Local mode to compare the enforcement differences.
+Before launching the sandbox, run the same checks it will enforce — on the **Terminal** tab, no sandbox required yet. This exercises the filesystem, network, and MCP policies from Step 2 for real, not just on paper.
+
+**Filesystem** — try reading something outside the workspace:
+
+```bash terminal-id=host
+cat /etc/passwd
+```
+
+```bash terminal-id=host
+cat ~/.ssh/id_rsa
+```
+
+Both fail — not "permission denied," but "no such file or directory." `/etc`, `/root`, `~/.ssh` are never mounted into the sandbox in the first place, matching the Step 2 explanation. Now check what *is* visible:
+
+```bash terminal-id=host
+ls /home/agent/workspace
+```
+
+Only the project workspace — the one host path the sandbox can see.
+
+**Network** — try an unapproved domain, then an approved one:
+
+```bash terminal-id=host
+curl https://raw-tracker.example
+```
+
+```bash terminal-id=host
+curl https://github.com
+```
+
+`raw-tracker.example` is refused before it ever reaches the internet; `github.com` returns `200` — matching the `sbx policy check` results from Step 2.
+
+**MCP** — list what's approved, then try adding a server that isn't:
+
+```bash terminal-id=host
+claude mcp list
+```
+
+```bash terminal-id=host
+claude mcp add internal-scraper -- npx -y internal-scraper-mcp
+```
+
+`claude mcp list` shows the two servers the org already approved (`claude.ai tools`, `docker-hub-mcp`); adding `internal-scraper` is refused by the sandbox's MCP gateway.
+
+All three policies check out — now start the sandbox for real. Your sandbox is automatically linked to your Docker Hub org when you're logged in. The real `sbx` CLI boots the sandbox *and* launches the agent in one call — there's no separate "start" step, and once it launches you're talking to Claude Code directly rather than typing shell commands yourself. The output below reflects the **Settings** toggle — switch to Local mode to compare the enforcement differences.
 
 Switch to the **Sandbox** tab (top right), then run:
 
@@ -161,16 +205,6 @@ sbx run --name sbx-claude-abc1 claude
 ```
 
 The sandbox boots a microVM, initializes a full Docker daemon inside it, applies all org policies (or local-only if toggled), attaches the credential proxy, and drops you into a Claude Code session. From here on, everything you type is a **prompt to Claude**, not a shell command — Claude runs the actual tool calls (reads, edits, builds, pushes) on your behalf, and every one of them is logged.
-
-### Check the policies are actually enforced
-
-Ask Claude to check its own boundaries — this exercises the filesystem, network, and MCP policies from Step 2 for real:
-
-```prompt terminal-id=sandbox
-Before we start, check what you can and can't access from inside this sandbox — filesystem, network, and MCP servers.
-```
-
-Claude confirms: only the workspace is mounted (nothing else from the host is visible — matching the Step 2 explanation), `github.com`/`pypi.org` are reachable while everything else is blocked (matching the `sbx policy check` results), and an attempt to add an unapproved MCP server is refused by the sandbox's MCP gateway.
 
 ---
 
@@ -241,9 +275,9 @@ There's no Ctrl+C for a simulated session — leave it the way you'd leave the r
 /exit
 ```
 
-Then switch back to the **Host** tab (top right).
+Then switch back to the **Terminal** tab (top right).
 
-Everything Claude Code did inside the sandbox is captured. On the **Host** terminal:
+Everything Claude Code did inside the sandbox is captured. On the **Terminal** tab:
 
 ```bash terminal-id=host
 sbx policy log

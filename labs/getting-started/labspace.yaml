@@ -9,7 +9,7 @@ simulator: simulator.yaml
 
 terminals:
   - id: host
-    title: Host
+    title: Terminal
     icon: dns
   - id: sandbox
     title: Sandbox
@@ -304,6 +304,72 @@ files:
       ]
     }
 
+  ai-coding-standard/spec.yaml: |
+    name: ai-coding-standard
+    version: v1
+    base_image: dhi.io/ubuntu:22.04-hardened
+
+    tools:
+      - claude-code
+      - git
+      - docker
+      - docker-scout
+      - gh
+
+    # Credentials are declared by name and type only — no secret values ever
+    # live in the kit. The real value is injected by the credential proxy
+    # at runtime (see Section 4, Step 3).
+    credentials:
+      - name: github
+        type: token
+        injected_as: GITHUB_TOKEN
+
+    policy:
+      network:
+        default: deny
+        allow: [github.com, docker.io]
+      filesystem:
+        mounts: [workspace]
+      mcp:
+        allow: [claude.ai-tools, docker-hub-mcp]
+
+    workspace_seed: files/
+    startup:
+      - echo "ai-coding-standard kit ready"
+
+  ai-coding-standard/files/.env.template: |
+    # Copy to .env and fill in locally — never commit real values.
+    # Secrets are injected by the credential proxy at runtime, not read from here.
+    NODE_ENV=development
+    LOG_LEVEL=info
+    API_BASE_URL=http://localhost:3000
+    DOCKER_ORG=
+
+  ai-coding-standard/files/.claude/CLAUDE.md: |
+    # Agent instructions — ai-coding-standard
+
+    ## Conventions
+    - Base images: only `dhi.io/*` hardened images ship to production.
+    - Every Dockerfile must set a non-root `USER`.
+    - Run `docker scout policy <image>` before calling any build "done."
+
+    ## Workflow
+    - Prefer the smallest diff that fixes the issue.
+    - Re-run `docker scout cves` after any base image change.
+    - Explain "why" in commit messages, not just "what."
+
+    ## Off-limits
+    - Never read, print, or commit `.env`, `~/.ssh/*`, or anything under `/etc`.
+    - Never hardcode credentials — the credential proxy injects them at the network layer.
+
+  ai-coding-standard/files/README.md: |
+    # ai-coding-standard workspace
+
+    Quick start:
+    1. `claude` is already running — just start typing.
+    2. Tools available: git, docker, docker-scout, gh.
+    3. See `.claude/CLAUDE.md` for this project's coding conventions.
+
 sections:
   - title: "1. Introduction"
     contentPath: 00-intro.md
@@ -337,10 +403,10 @@ sections:
         title: "Install the sbx CLI"
       - id: sbx-logged-in
         title: "Log in to sbx"
+      - id: sandbox-policies-checked
+        title: "Check network, filesystem, and MCP policies"
       - id: sbx-running
         title: "Start the sandbox and launch Claude Code"
-      - id: sandbox-policies-checked
-        title: "Check sandbox network, filesystem, and MCP policies"
       - id: bug-fixed
         title: "Find and fix the pricing bug"
       - id: image-patched

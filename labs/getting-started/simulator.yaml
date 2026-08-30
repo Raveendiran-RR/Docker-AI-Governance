@@ -1139,31 +1139,78 @@ scenarios:
   # they never match plain shell commands, and vice versa.
   # ─────────────────────────────────────────
 
-  - id: agent-policy-check
+  # Filesystem policy — literal commands run on the Terminal tab, before
+  # any sandbox exists, previewing what it will enforce once started.
+  - id: cmd-check-cat-passwd
     when:
-      agent: true
-      prompt: "Before we start, check what you can and can't access from inside this sandbox — filesystem, network, and MCP servers."
+      command: [cat]
+      args:
+        0: "/etc/passwd"
+    then:
+      output:
+        - "cat: /etc/passwd: No such file or directory"
+
+  - id: cmd-check-cat-sshkey
+    when:
+      command: [cat]
+      args:
+        0: "~/.ssh/id_rsa"
+    then:
+      output:
+        - "cat: /root/.ssh/id_rsa: No such file or directory"
+
+  - id: cmd-check-ls-workspace
+    when:
+      command: [ls]
+      args:
+        0: "/home/agent/workspace"
+    then:
+      state: { fs_policy_checked: true }
+      output:
+        - "catalog-service-node/   .claude/   README.md"
+
+  # Network policy — same pattern: literal curl commands, real output.
+  - id: cmd-check-curl-blocked
+    when:
+      command: [curl]
+      args:
+        0: "https://raw-tracker.example"
+    then:
+      output:
+        - "curl: (7) Failed to connect to raw-tracker.example port 443: Connection refused"
+
+  - id: cmd-check-curl-allowed
+    when:
+      command: [curl]
+      args:
+        0: "https://github.com"
+    then:
+      state: { network_policy_checked: true }
+      output:
+        - "*  Connected to github.com (140.82.121.3) port 443"
+        - "< HTTP/2 200"
+
+  # MCP policy — same pattern: literal claude mcp commands, real output.
+  - id: cmd-check-mcp-list
+    when:
+      command: [claude, mcp, list]
+    then:
+      output:
+        - "claude.ai tools       approved"
+        - "docker-hub-mcp        approved"
+
+  - id: cmd-check-mcp-add-blocked
+    when:
+      command: [claude, mcp, add]
+      args:
+        0: "internal-scraper"
     completes: sandbox-policies-checked
     then:
       output:
-        - "Checking sandbox access boundaries..."
-        - ""
-        - "Filesystem"
-        - "  Only /home/agent/workspace is mounted. /etc, /root, ~/.ssh, and every"
-        - "  other host path are not visible from inside this sandbox at all —"
-        - "  not blocked-and-logged, just never mounted in the first place."
-        - ""
-        - "Network"
-        - "  Allowed: github.com, pypi.org (added earlier with 'sbx policy allow network')"
-        - "  Everything else: blocked by the org's default-deny-network policy."
-        - ""
-        - "MCP"
-        - "  Approved servers already available: claude.ai tools, docker-hub-mcp."
-        - "  $ claude mcp add internal-scraper -- npx -y internal-scraper-mcp"
-        - "  ✗  Blocked by the sandbox MCP gateway: 'internal-scraper' is not in"
-        - "     {{ state.configured_org }}'s approved MCP server list."
-        - "     (MCP access is governed centrally in Docker Home — there's no"
-        - "     local policy toggle for it, unlike network and filesystem.)"
+        - "✗  Blocked by the sandbox MCP gateway: 'internal-scraper' is not in"
+        - "   {{ state.configured_org }}'s approved MCP server list."
+        - "   (MCP access is governed centrally in Docker Home — there's no local"
+        - "   policy toggle for it, unlike network and filesystem.)"
 
   - id: agent-fix-bug
     when:
@@ -1357,6 +1404,27 @@ scenarios:
         - "  ✓  Policy profile loaded: org-default"
         - ""
         - "  Start a sandbox with this kit: sbx run --kit {{ args.0 }} claude"
+
+  # ls / cat on the local kit directory being authored in Step 4 — cat falls
+  # through to the built-in virtual-FS reader (files declared in labspace.yaml);
+  # only the directory listings need explicit scenarios.
+  - id: ls-ai-coding-standard
+    when:
+      command: [ls]
+      args:
+        0: "./ai-coding-standard/"
+    then:
+      output:
+        - "spec.yaml  files/"
+
+  - id: ls-ai-coding-standard-files
+    when:
+      command: [ls]
+      args:
+        0: "./ai-coding-standard/files/"
+    then:
+      output:
+        - ".claude/  .env.template  README.md"
 
   # sbx kit pack — packages a local kit directory (spec.yaml + files/) into an artifact
   - id: sbx-kit-pack

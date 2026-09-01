@@ -21,7 +21,7 @@
 Key layers of sandbox isolation (outer → inner):
 
 ![Sandbox security architecture diagram](./sbx-security.png)
-![ ](labs/getting-started/sbx-security.png)
+
 
 ---
 

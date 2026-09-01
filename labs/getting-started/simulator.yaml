@@ -853,9 +853,9 @@ scenarios:
         - "remote: Enumerating objects: 41, done."
         - "Tapped 3 formulae (43 files, 52.1KB)."
         - "==> Fetching docker/tap/sbx"
-        - { text: "==> Downloading https://github.com/docker/sbx-cli/releases/download/v0.12.1/sbx_darwin_arm64.tar.gz", delay: pull }
+        - { text: "==> Downloading https://github.com/docker/sbx-cli/releases/download/v0.39/sbx_darwin_arm64.tar.gz", delay: pull }
         - "==> Installing sbx from docker/tap"
-        - "  /usr/local/Cellar/sbx/0.12.1: 5 files, 18.7MB"
+        - "  /usr/local/Cellar/sbx/0.39: 5 files, 18.7MB"
         - ""
         - "Run 'sbx --help' to get started."
         - "Docs: https://docs.docker.com/ai/sandboxes/"
@@ -892,7 +892,7 @@ scenarios:
       command: [sbx, version]
     then:
       output:
-        - "sbx version 0.12.1"
+        - "sbx version 0.39"
         - "  platform: darwin/arm64"
         - "  runtime: microvm (Apple Virtualization Framework)"
         - "  docs: https://docs.docker.com/ai/sandboxes/"

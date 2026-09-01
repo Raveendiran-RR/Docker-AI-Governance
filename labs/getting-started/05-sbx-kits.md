@@ -1,4 +1,4 @@
-# Section 5 — SBX Kits
+# Section 6 — SBX Kits
 
 ## What is an SBX Kit?
 

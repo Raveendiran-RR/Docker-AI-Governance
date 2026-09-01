@@ -311,4 +311,4 @@ The policy log shows every network request this sandbox made, split into **Block
 
 Docker Hub Integration, Docker Scout, and Docker Sandboxes form a **continuous governance loop** — from the base image you pull, through the CI policy gate, to every action an AI agent takes in your codebase.
 
-> [Continue to Section 5 → SBX Kits](#/5-sbx-kits) to learn how to package and distribute governed sandbox environments across your team.
+> [Continue to Section 5 → Org Governance](#/5-org-governance-policies-teams-roles) to see where those policies come from, and who is allowed to write them.

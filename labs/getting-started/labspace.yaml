@@ -31,6 +31,8 @@ files:
       2. Org Setup — Docker login + Scout policies
       3. DHI Product Catalog — CVEs, SBOM, VEX, attestations
       4. Sandboxes & AI Governance — policies, bug fix, CI fix
+      5. Org Governance — policies, teams, roles
+      6. SBX Kits — package and distribute a governed sandbox
 
     Follow the steps on the left panel.
     Every command in the terminal is fully simulated.
@@ -416,8 +418,18 @@ sections:
       - id: ci-green
         title: "Push and watch CI go green"
 
-  - title: "5. SBX Kits"
-    contentPath: 04-sbx-kits.md
+  - title: "5. Org Governance — Policies, Teams, Roles"
+    contentPath: 04-org-governance.md
+    steps:
+      - id: policy-verified
+        title: "Verify the org's published policy"
+      - id: policy-synced
+        title: "See it enforced across the org"
+      - id: team-scoped
+        title: "See a team-scoped policy in effect"
+
+  - title: "6. SBX Kits"
+    contentPath: 05-sbx-kits.md
     steps:
       - id: kit-inspected
         title: "Inspect a kit"

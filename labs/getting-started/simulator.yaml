@@ -21,6 +21,7 @@ state:
   bug_found: false
   bug_fixed: false
   image_patched: false
+  org_governance_synced: false      # section 5 — org governance active for this user
 
 settings:
   pace:
@@ -139,6 +140,7 @@ scenarios:
         bug_found: false
         bug_fixed: false
         image_patched: false
+        org_governance_synced: false
       output:
         - "  ╔══════════════════════════════════════════════════════╗"
         - "  ║            Demo Reset — State Cleared                ║"
@@ -152,6 +154,7 @@ scenarios:
         - "  ✓  Sandbox               stopped"
         - "  ✓  Bug fix state         cleared"
         - "  ✓  Image patch state     cleared"
+        - "  ✓  Org governance         cleared"
         - ""
         - "  Lab is back at initial state."
         - "  Start from Section 2 — Org Setup & Scout Policies."
@@ -929,6 +932,295 @@ scenarios:
         - "  1 policy active (source: local)"
         - "  Same minimal default as org mode — only the workspace is mounted."
 
+  # SECTION 5 — `--wide` adds the RESOURCES column, one domain per line —
+  # this is the real CLI's own layout (confirmed against an actual capture),
+  # not a comma-joined summary. Note: MockTerminal.css sets
+  # `.term-line { white-space: pre-wrap; word-break: break-word }`, so in
+  # this app's narrower embedded terminal (unlike a full-width desktop
+  # terminal) long lines will still soft-wrap rather than staying on one
+  # visual row -- that's a real limitation of reproducing this exact format
+  # here, not a formatting bug. MUST come before sbx-policy-ls-governed
+  # below: that scenario has no --wide condition, so it would otherwise
+  # swallow this one too (first-match-wins, more specific first). Every
+  # domain listed is the complete, real default-* set -- nothing truncated.
+  #
+  # Deliberately UNCONDITIONAL (no org_governance_synced gate): always shows
+  # local + kit + org rows together, regardless of whether the docker.io
+  # check earlier in this section has run yet. Also sets
+  # org_governance_synced itself, so a learner who runs --wide before that
+  # check still sees every other org-aware command (plain `ls`, `check`)
+  # behave consistently afterward.
+  - id: sbx-policy-ls-wide
+    when:
+      command: [sbx, policy, ls]
+      args:
+        --wide: { any: true }
+    then:
+      state: { org_governance_synced: true }
+      output:
+        - "SOURCE   APPLIES TO                       POLICY/RULE                    RULE_ID                                TYPE               DECISION   RESOURCES"
+        - "local    all                              default-ai-services             default-ai-services                    network            allow      **.chatgpt.com:443"
+        - "                                                                                                                                               **.cursor.sh:443"
+        - "                                                                                                                                               **.factory.ai:443"
+        - "                                                                                                                                               **.oaistatic.com:443"
+        - "                                                                                                                                               **.oaiusercontent.com:443"
+        - "                                                                                                                                               **.openai.com:443"
+        - "                                                                                                                                               api.anthropic.com:443"
+        - "                                                                                                                                               api.perplexity.ai:443"
+        - "                                                                                                                                               api.workos.com:443"
+        - "                                                                                                                                               cdn.openaimerge.com:443"
+        - "                                                                                                                                               chatgpt.com:443"
+        - "                                                                                                                                               claude.com:443"
+        - "                                                                                                                                               cursor.com:443"
+        - "                                                                                                                                               downloads.claude.ai:443"
+        - "                                                                                                                                               factory.ai:443"
+        - "                                                                                                                                               gemini.google.com:443"
+        - "                                                                                                                                               generativelanguage.googleapis.com:443"
+        - "                                                                                                                                               mcp-proxy.anthropic.com:443"
+        - "                                                                                                                                               models.dev:443"
+        - "                                                                                                                                               platform.claude.com:443"
+        - "                                                                                                                                               play.googleapis.com:443"
+        - "                                                                                                                                               statsig.anthropic.com:443"
+        - ""
+        - "local    all                              default-package-managers        default-package-managers               network            allow      **.bun.sh:443"
+        - "                                                                                                                                               **.gradle.org:443"
+        - "                                                                                                                                               **.packagist.org:443"
+        - "                                                                                                                                               **.yarnpkg.com:443"
+        - "                                                                                                                                               apache.org:443"
+        - "                                                                                                                                               astral.sh:443"
+        - "                                                                                                                                               bootstrap.pypa.io:443"
+        - "                                                                                                                                               bun.sh:443"
+        - "                                                                                                                                               cocoapods.org:443"
+        - "                                                                                                                                               cpan.org:443"
+        - "                                                                                                                                               crates.io:443"
+        - "                                                                                                                                               dot.net:443"
+        - "                                                                                                                                               dotnet.microsoft.com:443"
+        - "                                                                                                                                               eclipse.org:443"
+        - "                                                                                                                                               files.pythonhosted.org:443"
+        - "                                                                                                                                               golang.org:443"
+        - "                                                                                                                                               goproxy.io:443"
+        - "                                                                                                                                               gradle.org:443"
+        - "                                                                                                                                               haskell.org:443"
+        - "                                                                                                                                               hex.pm:443"
+        - "                                                                                                                                               index.crates.io:443"
+        - "                                                                                                                                               java.com:443"
+        - "                                                                                                                                               java.net:443"
+        - "                                                                                                                                               maven.org:443"
+        - "                                                                                                                                               metacpan.org:443"
+        - "                                                                                                                                               nodejs.org:443"
+        - "                                                                                                                                               nodesource.com:443"
+        - "                                                                                                                                               npm.duckdb.org:443"
+        - "                                                                                                                                               npmjs.com:443"
+        - "                                                                                                                                               npmjs.org:443"
+        - "                                                                                                                                               nuget.org:443"
+        - "                                                                                                                                               packagist.com:443"
+        - "                                                                                                                                               packagist.org:443"
+        - "                                                                                                                                               pkg.go.dev:443"
+        - "                                                                                                                                               proxy.golang.org:443"
+        - "                                                                                                                                               pub.dev:443"
+        - "                                                                                                                                               pypa.io:443"
+        - "                                                                                                                                               pypi.org:443"
+        - "                                                                                                                                               pypi.python.org:443"
+        - "                                                                                                                                               pythonhosted.org:443"
+        - "                                                                                                                                               registry.npmjs.org:443"
+        - "                                                                                                                                               repo.maven.apache.org:443"
+        - "                                                                                                                                               ruby-lang.org:443"
+        - "                                                                                                                                               rubygems.org:443"
+        - "                                                                                                                                               rubyonrails.org:443"
+        - "                                                                                                                                               rustup.rs:443"
+        - "                                                                                                                                               rvm.io:443"
+        - "                                                                                                                                               sh.rustup.rs:443"
+        - "                                                                                                                                               spring.io:443"
+        - "                                                                                                                                               static.crates.io:443"
+        - "                                                                                                                                               static.rust-lang.org:443"
+        - "                                                                                                                                               sum.golang.org:443"
+        - "                                                                                                                                               swift.org:443"
+        - "                                                                                                                                               tuf-repo-cdn.sigstore.dev:443"
+        - "                                                                                                                                               yarnpkg.com:443"
+        - "                                                                                                                                               ziglang.org:443"
+        - ""
+        - "local    all                              default-code-and-containers     default-code-and-containers            network            allow      **.data.mcr.microsoft.com:443"
+        - "                                                                                                                                               **.docker.com:443"
+        - "                                                                                                                                               **.docker.io:443"
+        - "                                                                                                                                               **.gcr.io:443"
+        - "                                                                                                                                               **.github.com:443"
+        - "                                                                                                                                               **.githubcopilot.com:443"
+        - "                                                                                                                                               **.githubusercontent.com:443"
+        - "                                                                                                                                               **.gitlab.com:443"
+        - "                                                                                                                                               **.production.cloudflare.docker.com:443"
+        - "                                                                                                                                               **.production.cloudfront.docker.com:443"
+        - "                                                                                                                                               bitbucket.org:443"
+        - "                                                                                                                                               code.visualstudio.com:443"
+        - "                                                                                                                                               dhi.io:443"
+        - "                                                                                                                                               dhi.io:80"
+        - "                                                                                                                                               docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443"
+        - "                                                                                                                                               docker.com:443"
+        - "                                                                                                                                               docker.io:443"
+        - "                                                                                                                                               gcr.io:443"
+        - "                                                                                                                                               ghcr.io:443"
+        - "                                                                                                                                               github.com:443"
+        - "                                                                                                                                               gitlab.com:443"
+        - "                                                                                                                                               k8s.io:443"
+        - "                                                                                                                                               launchpad.net:443"
+        - "                                                                                                                                               mcr.microsoft.com:443"
+        - "                                                                                                                                               ppa.launchpad.net:443"
+        - "                                                                                                                                               production.cloudflare.docker.com:443"
+        - "                                                                                                                                               production.cloudfront.docker.com:443"
+        - "                                                                                                                                               public.ecr.aws:443"
+        - "                                                                                                                                               quay.io:443"
+        - "                                                                                                                                               registry.k8s.io:443"
+        - "                                                                                                                                               sourceforge.net:443"
+        - "                                                                                                                                               vscode.dev:443"
+        - "                                                                                                                                               vscode.download.prss.microsoft.com:443"
+        - ""
+        - "local    all                              default-cloud-infrastructure    default-cloud-infrastructure           network            allow      **.amazonaws.com:443"
+        - "                                                                                                                                               **.blob.core.windows.net:443"
+        - "                                                                                                                                               **.googleapis.com:443"
+        - "                                                                                                                                               **.googleusercontent.com:443"
+        - "                                                                                                                                               **.gstatic.com:443"
+        - "                                                                                                                                               **.gvt1.com:443"
+        - "                                                                                                                                               **.hashicorp.com:443"
+        - "                                                                                                                                               **.public.blob.vercel-storage.com:443"
+        - "                                                                                                                                               **.visualstudio.com:443"
+        - "                                                                                                                                               apis.google.com:443"
+        - "                                                                                                                                               app.daytona.io:443"
+        - "                                                                                                                                               azure.com:443"
+        - "                                                                                                                                               binaries.prisma.sh:443"
+        - "                                                                                                                                               challenges.cloudflare.com:443"
+        - "                                                                                                                                               clerk.com:443"
+        - "                                                                                                                                               csp.withgoogle.com:443"
+        - "                                                                                                                                               dev.azure.com:443"
+        - "                                                                                                                                               dl.google.com:443"
+        - "                                                                                                                                               fastly.com:443"
+        - "                                                                                                                                               figma.com:443"
+        - "                                                                                                                                               hashicorp.com:443"
+        - "                                                                                                                                               jsdelivr.net:443"
+        - "                                                                                                                                               json-schema.org:443"
+        - "                                                                                                                                               json.schemastore.org:443"
+        - "                                                                                                                                               login.microsoftonline.com:443"
+        - "                                                                                                                                               mise-versions.jdx.dev:443"
+        - "                                                                                                                                               mise.run:443"
+        - "                                                                                                                                               packages.microsoft.com:443"
+        - "                                                                                                                                               play.google.com:443"
+        - "                                                                                                                                               playwright.azureedge.net:443"
+        - "                                                                                                                                               supabase.com:443"
+        - "                                                                                                                                               unpkg.com:443"
+        - "                                                                                                                                               vercel.com:443"
+        - "                                                                                                                                               visualstudio.com:443"
+        - "                                                                                                                                               www.google.com:443"
+        - ""
+        - "local    all                              default-os-packages             default-os-packages                    network            allow      **.debian.org:443"
+        - "                                                                                                                                               alpinelinux.org:443"
+        - "                                                                                                                                               apt.llvm.org:443"
+        - "                                                                                                                                               archive.ubuntu.com:443"
+        - "                                                                                                                                               archive.ubuntu.com:80"
+        - "                                                                                                                                               archlinux.org:443"
+        - "                                                                                                                                               centos.org:443"
+        - "                                                                                                                                               debian.org:443"
+        - "                                                                                                                                               dl-cdn.alpinelinux.org:443"
+        - "                                                                                                                                               fedoraproject.org:443"
+        - "                                                                                                                                               packagecloud.io:443"
+        - "                                                                                                                                               ports.ubuntu.com:443"
+        - "                                                                                                                                               ports.ubuntu.com:80"
+        - "                                                                                                                                               security.ubuntu.com:443"
+        - "                                                                                                                                               security.ubuntu.com:80"
+        - "                                                                                                                                               ubuntu.com:443"
+        - ""
+        - "local    all                              default-cert-validation         default-cert-validation                network            allow      **.amazontrust.com:443"
+        - "                                                                                                                                               **.amazontrust.com:80"
+        - "                                                                                                                                               **.lencr.org:443"
+        - "                                                                                                                                               **.lencr.org:80"
+        - "                                                                                                                                               **.pki.goog:443"
+        - "                                                                                                                                               **.pki.goog:80"
+        - "                                                                                                                                               **.pki.microsoft.com:443"
+        - "                                                                                                                                               **.pki.microsoft.com:80"
+        - "                                                                                                                                               *.one.au.digicert.com:80"
+        - "                                                                                                                                               *.one.ch.digicert.com:80"
+        - "                                                                                                                                               *.one.digicert.co.jp:80"
+        - "                                                                                                                                               *.one.digicert.com:80"
+        - "                                                                                                                                               *.one.nl.digicert.com:80"
+        - "                                                                                                                                               cacerts.digicert.com:80"
+        - "                                                                                                                                               crl*.digicert.com:80"
+        - "                                                                                                                                               crl.comodoca.com:80"
+        - "                                                                                                                                               crl.globalsign.com:80"
+        - "                                                                                                                                               crl.globalsign.net:80"
+        - "                                                                                                                                               crl.sectigo.com:80"
+        - "                                                                                                                                               crl.usertrust.com:80"
+        - "                                                                                                                                               crt.sectigo.com:80"
+        - "                                                                                                                                               isrg.trustid.ocsp.identrust.com:80"
+        - "                                                                                                                                               ocsp.comodoca.com:80"
+        - "                                                                                                                                               ocsp.digicert.com:80"
+        - "                                                                                                                                               ocsp.globalsign.com:443"
+        - "                                                                                                                                               ocsp.globalsign.com:80"
+        - "                                                                                                                                               ocsp.sectigo.com:80"
+        - "                                                                                                                                               ocsp.usertrust.com:80"
+        - "                                                                                                                                               ocsp2.globalsign.com:443"
+        - "                                                                                                                                               ocsp2.globalsign.com:80"
+        - ""
+        - "local    all                              default-fs-read-allow-all       default-fs-read-allow-all              filesystem:read    allow      **"
+        - ""
+        - "local    all                              default-fs-write-allow-all      default-fs-write-allow-all             filesystem:write   allow      **"
+        - ""
+        - "kit      sandbox:AI-GOV-SimSpace-01-sep   kit:AI-GOV-SimSpace-01-sep      a535a2d4-2aff-47e8-bb70-16c73dc7215c   network            allow      claude.com:443"
+        - "                                                                                                                                               downloads.claude.ai:443"
+        - "                                                                                                                                               mcp-proxy.anthropic.com:443"
+        - ""
+        - "kit      sandbox:shell-floci              kit:shell-floci                 6e562a9a-d41e-4de5-8eb6-3f812ff52819   network            allow      openrouter.ai"
+        - ""
+        - "org      organization                     net-baseline                    net-baseline                           network            allow      github.com:443"
+        - "                                                                                                                                               docker.io:443"
+        - ""
+        - "org      team:data-eng                    net-data-eng                    net-data-eng                           network            allow      huggingface.co:443"
+        - ""
+        - "org      organization                     org-workspace-read              org-workspace-read                     filesystem:read    allow      /home/agent/workspace"
+        - "org      organization                     org-workspace-write             org-workspace-write                    filesystem:write   allow      /home/agent/workspace"
+        - ""
+        - "14 policies active"
+        - "Governance: Managed by {{ state.configured_org }}"
+
+
+  # SECTION 5 — org governance active. Real column set confirmed against the
+  # actual CLI: SOURCE / APPLIES TO / POLICY/RULE / RULE_ID / TYPE / DECISION
+  # (+ RESOURCES for --wide, see sbx-policy-ls-wide above, near the top of
+  # this file — it fires unconditionally and sets org_governance_synced
+  # itself, so this scenario's own state gate is normally already satisfied
+  # by the time a learner reaches a plain `ls`). Local ships with several
+  # pre-baked default-* allow policies, not one row — this is the real list.
+  # MUST stay above sbx-policy-ls-org and sbx-policy-ls-local: both match on
+  # state alone with no args, so they would swallow this one by position.
+  - id: sbx-policy-ls-governed
+    completes: policy-synced
+    when:
+      command: [sbx, policy, ls]
+      state: { org_governance_synced: true }
+    then:
+      output:
+        - "SOURCE   APPLIES TO      POLICY/RULE                    RULE_ID                        TYPE               DECISION"
+        - "local    all             default-ai-services            default-ai-services            network            allow"
+        - "local    all             default-package-managers       default-package-managers       network            allow"
+        - "local    all             default-code-and-containers    default-code-and-containers    network            allow"
+        - "local    all             default-cloud-infrastructure   default-cloud-infrastructure   network            allow"
+        - "local    all             default-os-packages            default-os-packages            network            allow"
+        - "local    all             default-cert-validation        default-cert-validation        network            allow"
+        - "local    all             default-fs-read-allow-all      default-fs-read-allow-all      filesystem:read    allow"
+        - "local    all             default-fs-write-allow-all     default-fs-write-allow-all     filesystem:write   allow"
+        - "kit      sandbox:AI-GOV-SimSpace-01-sep   kit:AI-GOV-SimSpace-01-sep     a535a2d4-2aff-47e8-bb70-16c73dc7215c   network            allow"
+        - "kit      sandbox:shell-floci              kit:shell-floci                6e562a9a-d41e-4de5-8eb6-3f812ff52819   network            allow"
+        - "org      organization    net-baseline                   net-baseline                   network            allow"
+        - "org      team:data-eng   net-data-eng                   net-data-eng                   network            allow"
+        - "org      organization    org-workspace-read             org-workspace-read             filesystem:read    allow"
+        - "org      organization    org-workspace-write            org-workspace-write            filesystem:write   allow"
+        - ""
+        - "14 policies active"
+        - "Governance: Managed by {{ state.configured_org }}"
+        - ""
+        - "Local already ships with a handful of pre-baked allow policies (package"
+        - "registries, code hosts, cloud infra, OS packages, cert validation) — that's"
+        - "not something org governance replaces. Org adds four policies on top:"
+        - "net-baseline (organization-wide), net-data-eng (scoped to team:data-eng),"
+        - "and a filesystem pair locking every sandbox to the project workspace."
+        - "Run 'sbx policy ls --wide' to see every rule each of these actually allows."
+
   - id: sbx-policy-ls-org
     when:
       command: [sbx, policy, ls]
@@ -975,7 +1267,11 @@ scenarios:
         - "    Note: Org-level policies still enforce the global allowlist."
         - "    Admins can lock this with 'sbx policy lock network' to prevent overrides."
 
-  # sbx policy check network <domain> — real subcommand, dry-runs a policy decision without a live sandbox
+  # sbx policy check network <domain> — real subcommand, dry-runs a policy
+  # decision without a live sandbox. Output format confirmed against the real
+  # CLI: `Allowed:`/`Denied: <domain>:<port>`, then Governance/Context/Reason —
+  # no rule names, no table. Governance reads "Local policy only" until org
+  # governance is active, then "Managed by <org>".
   - id: sbx-policy-check-network-allowed
     when:
       command: [sbx, policy, check, network]
@@ -983,12 +1279,76 @@ scenarios:
         0: "github.com"
     then:
       output:
-        - "  RESOURCE      DECISION  MATCHED RULE"
-        - "  ─────────────────────────────────────────────────────────────────────"
-        - "  github.com    ALLOW     default-allow-network (source: local, added by you)"
-        - ""
-        - "  ✓  github.com would be reachable from a sandbox right now."
+        - "Allowed: github.com:443"
+        - "Governance: Local policy only"
+        - "Context: global"
+        - "Reason: matches local allow rule (github.com)"
 
+  # SECTION 5 — docker.io is on the org baseline; also flips the org-governed
+  # gate for `sbx policy ls`. MUST stay above sbx-policy-check-network-denied,
+  # which matches args.0 with { any: true }.
+  - id: sbx-policy-check-network-docker-allowed
+    completes: policy-verified
+    when:
+      command: [sbx, policy, check, network]
+      args:
+        0: "docker.io"
+    then:
+      state: { org_governance_synced: true }
+      output:
+        - "Allowed: docker.io:443"
+        - "Governance: Managed by {{ state.configured_org }}"
+        - "Context: global"
+        - "Reason: matches org allow rule (docker.io)"
+
+  # SECTION 5 — denied by the ORG baseline, not a local rule. MUST stay above
+  # sbx-policy-check-network-denied, which matches args.0 with { any: true }.
+  - id: sbx-policy-check-network-org-denied
+    when:
+      command: [sbx, policy, check, network]
+      args:
+        0: "pastebin.com"
+    then:
+      output:
+        - "Denied: pastebin.com:443"
+        - "Governance: Managed by {{ state.configured_org }}"
+        - "Context: global"
+        - "Reason: no matching allow rule (default deny)"
+
+  # SECTION 5 — huggingface.co is only on the data-eng team's scoped policy;
+  # this learner isn't on that team, so it's correctly denied. MUST stay above
+  # sbx-policy-check-network-denied. The CLI's own output has no notion of
+  # "which team" — the team-scoping explanation lives in the lab's prose, not
+  # in this (real, minimal) command output.
+  - id: sbx-policy-check-network-huggingface
+    completes: team-scoped
+    when:
+      command: [sbx, policy, check, network]
+      args:
+        0: "huggingface.co"
+    then:
+      output:
+        - "Denied: huggingface.co:443"
+        - "Governance: Managed by {{ state.configured_org }}"
+        - "Context: global"
+        - "Reason: no matching allow rule (default deny)"
+
+  # Generic fallback for any other domain once org governance is active — MUST
+  # stay above the local-mode fallback below (first-match-wins).
+  - id: sbx-policy-check-network-denied-org
+    when:
+      command: [sbx, policy, check, network]
+      args:
+        0: { any: true }
+      state: { org_governance_synced: true }
+    then:
+      output:
+        - "Denied: {{ args.0 }}:443"
+        - "Governance: Managed by {{ state.configured_org }}"
+        - "Context: global"
+        - "Reason: no matching allow rule (default deny)"
+
+  # Generic fallback for any other domain before org governance is active.
   - id: sbx-policy-check-network-denied
     when:
       command: [sbx, policy, check, network]
@@ -996,11 +1356,10 @@ scenarios:
         0: { any: true }
     then:
       output:
-        - "  RESOURCE               DECISION  MATCHED RULE"
-        - "  ─────────────────────────────────────────────────────────────────────"
-        - "  {{ args.0 }}    DENY      default-deny-network (source: org — {{ state.configured_org }})"
-        - ""
-        - "  ✗  {{ args.0 }} would be blocked — no allow rule matches it."
+        - "Denied: {{ args.0 }}:443"
+        - "Governance: Local policy only"
+        - "Context: global"
+        - "Reason: no matching allow rule (default deny)"
 
   # sbx policy log — real subcommand for per-sandbox activity (no `sbx audit` in the real CLI)
   - id: sbx-policy-log
@@ -1018,6 +1377,19 @@ scenarios:
         - "sbx-claude-abc1  network   pypi.org:443     forward-bypass                   19:43:47 27-Aug   1"
         - ""
         - "Full org audit trail: https://hub.docker.com/orgs/{{ state.configured_org }}/scout/audit"
+
+  # ─────────────────────────────────────────
+  # SECTION 5 — ORG GOVERNANCE: policies, teams, roles
+  #
+  # Docker has no CLI for org, team or role management — that's all done in
+  # the AI Governance portal (Docker Home -> AI Platform -> Network /
+  # Filesystem / MCP access), not simulated here. Every command this section
+  # uses (sbx-policy-check-network-docker-allowed above,
+  # sbx-policy-check-network-huggingface below, plus sbx-policy-ls-governed
+  # and sbx-policy-log) IS the real CLI — it verifies what the portal already
+  # published, it doesn't create anything. 04-org-governance.md states the
+  # same thing to the learner in a callout.
+  # ─────────────────────────────────────────
 
   # sbx run --kit <ref> claude — MUST come before the plain `sbx run` scenarios below (first-match-wins)
   - id: sbx-run-with-kit

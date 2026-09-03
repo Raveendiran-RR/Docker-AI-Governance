@@ -6,7 +6,7 @@
 - **Org** — the account-level boundary everything else here is scoped to
 - **Policy** — the rule an org publishes, and how a developer confirms it's live
 - **Local vs. Centrally Controlled** — how local defaults, kits, teams, and org policy all stack into one effective set of rules
-- **CEDAR** — (Fine grained control)the language every one of those rules actually compiles down to, with a copy-pasteable example
+- **CEDAR** — (Fine-grained control) the policy language MCP access compiles down to — `permit`/`forbid` rules down to individual tool calls, with copy-pasteable examples
 - **Audit logging** *(closing note)* — how every decision, and every change to policy, stays attributable
 
 ## Why one laptop's rules aren't enough
@@ -157,38 +157,57 @@ sbx policy check network huggingface.co
 
 ## Fine-Grained Control: CEDAR
 
-Every rule above — the allow list, the deny list, the additive/absolute logic, the union of org/team/local — is expressed in **CEDAR**, an open-source policy language designed for exactly this: access rules that are explicit, auditable, and machine-checked instead of buried in application code. The AI Governance portal is a UI on top of CEDAR — every dropdown and rule builder you've used above is generating CEDAR for you.
+Network and filesystem policy, above, are simple allow/deny lists — is this domain reachable, is this path mounted. MCP policy goes one level deeper, because "is this server approved" isn't fine-grained enough on its own: a server can be approved and still expose individual tools you don't want every principal calling. That's what **CEDAR** is for: an open-source policy language for access rules that are explicit, auditable, and machine-checked instead of buried in application code. The AI Governance portal's MCP rule builder is a UI on top of CEDAR — every server and tool you approve or block there is generating a CEDAR `permit` or `forbid` statement underneath.
 
 Here's the shape of it:
 
 ```mermaid no-run-button
 flowchart TD
-    P["Policy"] -->|compiles to| C["CEDAR rule<br/>permit / deny"]
-    C -->|evaluated against| S["Sandbox request"]
+    P["MCP policy"] -->|compiles to| C["CEDAR rule<br/>permit / forbid"]
+    C -->|evaluated against| S["invokeTool request<br/>principal, action, resource"]
     S --> A["ALLOW"]
-    S --> Deny["DENY"]
+    S --> F["FORBID"]
 
     classDef allow fill:#e7f5ec,stroke:#1f8a5f,color:#14532d;
     classDef deny fill:#fbeae9,stroke:#c1443c,color:#7f1d1d;
     class A allow;
-    class Deny deny;
+    class F deny;
 ```
 
-Every policy compiles down to a `permit` or `deny` statement, matched against the action and resource a sandbox is trying to reach. The org baseline from earlier — allow `github.com`, `docker.io`; deny everything else — is, in full, this:
+Every MCP policy compiles down to a `permit` or `forbid` statement, matched against the **principal** (who's asking), the **action** — always `MCP::Action::"invokeTool"` for a tool call — and the **resource**: the specific tool on the specific server. Approving `docker-hub-mcp` at the server level, the way `claude mcp list` showed it earlier, is a permit with no further restriction:
 
 ```js filename="policy.cedar" no-run-button
-permit(
-  action == Net::Egress,
-  resource in { host("github.com"), host("docker.io") }
-);
-
-deny(
-  action == Net::Egress,
-  resource == "*"
-);
+permit (
+    principal,
+    action == MCP::Action::"invokeTool",
+    resource
+)
+when {
+    resource in MCP::Server::"docker-hub-mcp"
+};
 ```
 
-That isn't illustrative pseudo-syntax — paste it as-is into the AI Governance portal's policy editor and you'd reproduce the exact baseline above.
+Now go finer-grained: say `notion` is approved for research, but the tools that write back to Notion should stay off-limits for everyone. A `forbid` narrows access on an otherwise-approved server down to just those tools:
+
+```js filename="policy.cedar" no-run-button
+forbid (
+    principal,
+    action == MCP::Action::"invokeTool",
+    resource
+)
+when {
+    resource in MCP::Server::"notion" &&
+    [
+        "notion-update-page",
+        "notion-update-data-source",
+        "notion-update-view"
+    ].contains(resource.name)
+};
+```
+
+The `when` clause is what makes this fine-grained: it matches only those three write tools, so every other `notion` tool (`notion-search`, `notion-fetch`, …) stays reachable. And the same absolute rule from network and filesystem policy holds here too — a `forbid` always beats a `permit` for the same request, no matter which policy published it.
+
+That isn't illustrative pseudo-syntax — paste either block as-is into the AI Governance portal's MCP policy editor and you'd reproduce that exact rule.
 
 > **Reference**
 > - CEDAR language docs: [cedarpolicy.org](https://www.cedarpolicy.org/)
@@ -210,9 +229,9 @@ Governance without an audit trail is just a suggestion. From a sandbox, `sbx pol
 | Everything is scoped to an org | `{{ state.configured_org }}`, managed at Docker Home → AI Platform |
 | Policies are published in the portal, not per-laptop | Docker Home → AI Platform → Governance |
 | Org rules beat local ones; access can differ by team | `sbx policy check network docker.io` / `huggingface.co` |
-| Every rule is CEDAR underneath | copy-pasteable `policy.cedar` above |
+| MCP access is governed by CEDAR down to individual tool calls | copy-pasteable `policy.cedar` above |
 | Every decision is auditable | `sbx policy log` + the org's Docker Hub audit dashboard |
 
-Roles decide *who may change the answer*. An org is the boundary it's all scoped to. Policies decide *what* a sandbox may do — as a union of org-wide, team-scoped, and local rules — and CEDAR is what actually runs that decision underneath.
+Roles decide *who may change the answer*. An org is the boundary it's all scoped to. Policies decide *what* a sandbox may do — as a union of org-wide, team-scoped, and local rules for network and filesystem — and CEDAR is what runs that decision underneath for MCP, down to individual tool calls.
 
 > [Continue to Section 6 → SBX Kits](#/6-sbx-kits) to learn how to package a governed environment — tools, policy profile, and workspace — into one distributable artifact.
